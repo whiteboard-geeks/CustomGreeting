@@ -42,6 +42,6 @@ def text_to_speech_file(text: str, name: str) -> str:
 
 
 # Generate and save greeting for each name
-for name in names[:1]:
+for name in names:
     greeting_text = f"Hi {name}!"
     text_to_speech_file(greeting_text, name)
