@@ -22,7 +22,7 @@ video_file = os.path.join(input_folder, "Mckesson_Land+Expand_noMusic.mp4")
 video = VideoFileClip(video_file)
 
 # Process each audio file in the audio folder
-for audio_filename in os.listdir(audio_folder)[:2]:
+for audio_filename in os.listdir(audio_folder):
     if audio_filename.endswith(".mp3"):
         audio_path = os.path.join(audio_folder, audio_filename)
 
