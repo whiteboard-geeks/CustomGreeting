@@ -15,7 +15,7 @@ def create_silence(duration=1):
 
 # Define paths
 input_folder = "input"
-audio_folder = os.path.join(input_folder, "audio")
+audio_folder = os.path.join(input_folder, "greetings")
 video_file = os.path.join(input_folder, "Mckesson_Land+Expand_noMusic.mp4")
 
 # Load the video file
@@ -29,8 +29,8 @@ for audio_filename in os.listdir(audio_folder)[:2]:
         # Load the audio file
         audio = AudioFileClip(audio_path)
 
-        # Trim 1.5 seconds from the beginning of the video's audio
-        video_voiceover_audio = video.audio.subclip(1.5)
+        # Trim a bit the beginning of the video's audio. By trimming 1 second, it leaves about 0.5 seconds of silence between the greeting and the rest of the voiceover.
+        video_voiceover_audio = video.audio.subclip(1)
 
         # Concatenate the new audio with the trimmed video audio
         voiceover_audio_with_greeting = concatenate_audioclips(
