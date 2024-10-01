@@ -42,6 +42,11 @@ def text_to_speech_file(text: str, name: str) -> str:
 
 
 # Generate and save greeting for each name
+output_folder = "input/greetings"
 for name in names:
+    output_file_path = os.path.join(output_folder, f"{name}.mp3")
+    if os.path.exists(output_file_path):
+        print(f"{output_file_path} already exists. Skipping...")
+        continue
     greeting_text = f"Hi {name}!"
     text_to_speech_file(greeting_text, name)
