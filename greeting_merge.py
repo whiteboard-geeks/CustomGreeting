@@ -37,14 +37,14 @@ for audio_filename in os.listdir(audio_folder)[:2]:
             [audio, video_voiceover_audio]
         )
 
-        silence = create_silence(1)
+        silence = create_silence(2)
 
         # Concatenate the silence with the new audio
         voiceover_audio_with_intro_silence = concatenate_audioclips(
             [silence, voiceover_audio_with_greeting]
         )
 
-        music = AudioFileClip(os.path.join(input_folder, "music.wav"))
+        music = AudioFileClip(os.path.join(input_folder, "music.wav")).volumex(0.05)
 
         # Composite the music with the voiceover audio
         final_audio = CompositeAudioClip(
@@ -58,7 +58,7 @@ for audio_filename in os.listdir(audio_folder)[:2]:
         output_filename = (
             f"{os.path.splitext(audio_filename)[0]}_Mckesson_Land+Expand.mp4"
         )
-        output_path = os.path.join(input_folder, output_filename)
+        output_path = os.path.join("output", output_filename)
 
         # Write the final video to a file
         final_video.write_videofile(output_path, codec="libx264", audio_codec="aac")
