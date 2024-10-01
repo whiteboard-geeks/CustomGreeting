@@ -16,7 +16,7 @@ def create_silence(duration=1):
 # Define paths
 input_folder = "input"
 audio_folder = os.path.join(input_folder, "greetings")
-video_file = os.path.join(input_folder, "Mckesson_Land+Expand_noMusic.mp4")
+video_file = os.path.join(input_folder, "Mckesson_Land+Expand_2.mp4")
 
 # Load the video file
 video = VideoFileClip(video_file)
