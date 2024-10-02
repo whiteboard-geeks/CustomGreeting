@@ -87,11 +87,16 @@ else:
                 greeting_text = f"Hi {name}!"
                 text_to_speech_file(client, greeting_text, name, greetings_folder)
 
+            # Initialize progress bar
+            progress_bar = st.progress(0)
+            total_videos = len(names)
+
             # Process each audio file and create videos
             video = VideoFileClip(base_video_path)
             zip_filename = os.path.join(output_folder, "rendered_videos.zip")
+            progress_counter = 0
             with zipfile.ZipFile(zip_filename, "w") as zipf:
-                for audio_filename in os.listdir(greetings_folder):
+                for idx, audio_filename in enumerate(os.listdir(greetings_folder)):
                     if audio_filename.endswith(".mp3") and not audio_filename == ".mp3":
                         audio_path = os.path.join(greetings_folder, audio_filename)
                         audio = AudioFileClip(audio_path)
@@ -113,6 +118,8 @@ else:
                         final_video.write_videofile(
                             output_path, codec="libx264", audio_codec="aac"
                         )
+                        progress_counter += 1
+                        progress_bar.progress(progress_counter / total_videos)
                         zipf.write(output_path, arcname=output_filename)
 
             st.success("Processing complete!")
