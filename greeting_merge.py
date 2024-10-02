@@ -15,9 +15,11 @@ def create_silence(duration=1):
 
 # Define paths
 input_folder = "input"
-audio_folder = os.path.join(input_folder, "greetings")
-video_file = os.path.join(input_folder, "Mckesson_Land+Expand_2.mp4")
+video_file = os.path.join(input_folder, "LabCorp_Land+Expand.mp4")
+output_folder = "output/LabCorp"
+os.makedirs(output_folder, exist_ok=True)
 
+audio_folder = os.path.join(input_folder, "greetings")
 # Load the video file
 video = VideoFileClip(video_file)
 
@@ -30,7 +32,7 @@ for audio_filename in os.listdir(audio_folder):
         audio = AudioFileClip(audio_path)
 
         # Trim a bit the beginning of the video's audio. By trimming 1 second, it leaves about 0.5 seconds of silence between the greeting and the rest of the voiceover.
-        video_voiceover_audio = video.audio.subclip(1)
+        video_voiceover_audio = video.audio.subclip(1.5)
 
         # Concatenate the new audio with the trimmed video audio
         voiceover_audio_with_greeting = concatenate_audioclips(
@@ -55,10 +57,8 @@ for audio_filename in os.listdir(audio_folder):
         final_video = video.set_audio(final_audio)
 
         # Define the output filename
-        output_filename = (
-            f"{os.path.splitext(audio_filename)[0]}_Mckesson_Land+Expand.mp4"
-        )
-        output_path = os.path.join("output", output_filename)
+        output_filename = f"{os.path.splitext(audio_filename)[0]}_Land+Expand.mp4"
+        output_path = os.path.join(output_folder, output_filename)
 
         # Write the final video to a file
         final_video.write_videofile(output_path, codec="libx264", audio_codec="aac")

@@ -92,7 +92,7 @@ else:
             zip_filename = os.path.join(output_folder, "rendered_videos.zip")
             with zipfile.ZipFile(zip_filename, "w") as zipf:
                 for audio_filename in os.listdir(greetings_folder):
-                    if audio_filename.endswith(".mp3"):
+                    if audio_filename.endswith(".mp3") and not audio_filename == ".mp3":
                         audio_path = os.path.join(greetings_folder, audio_filename)
                         audio = AudioFileClip(audio_path)
                         video_voiceover_audio = video.audio.subclip(clip_start)
