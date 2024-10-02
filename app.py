@@ -1,7 +1,6 @@
 import os
 import zipfile
 import streamlit as st
-import pandas as pd
 from moviepy.editor import (
     AudioFileClip,
     AudioClip,
@@ -53,13 +52,13 @@ if not api_key:
 else:
     base_video = st.file_uploader("Upload Base Video", type=["mp4"])
     music = st.file_uploader("Upload Music", type=["wav"])
-    names_csv = st.file_uploader("Upload CSV of Names", type=["csv"])
+    names_input = st.text_area("Enter Names (one per line)")
     clip_start = st.number_input(
         "Amount to clip from the start of the video", min_value=0.0, value=1.0
     )
 
     if st.button("Generate Videos"):
-        if not base_video or not names_csv:
+        if not base_video or not names_input:
             st.error("Please provide all inputs.")
         else:
             client = ElevenLabs(api_key=api_key)
@@ -77,8 +76,8 @@ else:
             with open(music_path, "wb") as f:
                 f.write(music.read())
 
-            names_df = pd.read_csv(names_csv)
-            names = names_df.iloc[:, 0].tolist()
+            # Parse names input
+            names = [name.strip() for name in names_input.split("\n") if name.strip()]
 
             # Generate greetings
             greetings_folder = os.path.join(input_folder, "greetings")
