@@ -43,11 +43,11 @@ def text_to_speech_file(client, text: str, name: str, output_folder: str) -> str
 
 
 # Streamlit UI
+st.set_page_config(page_title="Video Greeting Generator", page_icon="🎬")
 st.title("Video Greeting Generator")
 
 # Read API key from environment variable
 api_key = st.secrets["ELEVENLABS_API_KEY"]
-st.write(f"API Key: {api_key}")
 if not api_key:
     st.error("ELEVENLABS_API_KEY environment variable not set.")
 else:
@@ -55,7 +55,7 @@ else:
     music = st.file_uploader("Upload Music", type=["wav"])
     names_csv = st.file_uploader("Upload CSV of Names", type=["csv"])
     clip_start = st.number_input(
-        "Amount to clip from the start of the video", min_value=0, value=1
+        "Amount to clip from the start of the video", min_value=0.0, value=1.0
     )
 
     if st.button("Generate Videos"):
