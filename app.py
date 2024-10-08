@@ -87,7 +87,6 @@ else:
                 text_to_speech_file(client, greeting_text, name, greetings_folder)
 
             # Initialize progress bar
-            progress_bar = st.progress(0)
             total_videos = len(names)
 
             # Process each audio file and create videos
@@ -125,7 +124,6 @@ else:
                                 output_path, codec="libx264", audio_codec="aac"
                             )
                             progress_counter += 1
-                            progress_bar.progress(progress_counter / total_videos)
                             zipf.write(output_path, arcname=output_filename)
 
             st.success("Processing complete!")
