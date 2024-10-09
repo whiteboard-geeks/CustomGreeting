@@ -126,6 +126,18 @@ else:
                             progress_counter += 1
                             zipf.write(output_path, arcname=output_filename)
 
+            # Clean up the greetings folder
+            for audio_filename in os.listdir(greetings_folder):
+                file_path = os.path.join(greetings_folder, audio_filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+
+            # Remove the base video and music files
+            if os.path.isfile(base_video_path):
+                os.remove(base_video_path)
+            if os.path.isfile(music_path):
+                os.remove(music_path)
+
             st.success("Processing complete!")
             st.download_button(
                 "Download Rendered Videos",
