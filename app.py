@@ -18,10 +18,12 @@ def create_silence(duration=1):
 
 
 # Function to generate greeting and save as MP3
-def text_to_speech_file(client, text: str, name: str, output_folder: str) -> str:
+def text_to_speech_file(
+    client, text: str, name: str, output_folder: str, voice_id: str
+) -> str:
     response = client.text_to_speech.convert(
-        voice_id="Ro4VVDudw85O3XfD3nva",  # Barbara Pigg 1
-        output_format="mp3_22050_32",
+        voice_id=voice_id,
+        output_format="mp3_44100_192",
         text=text,
         model_id="eleven_multilingual_v2",
         voice_settings=VoiceSettings(
@@ -44,6 +46,16 @@ def text_to_speech_file(client, text: str, name: str, output_folder: str) -> str
 # Streamlit UI
 st.set_page_config(page_title="Video Greeting Generator", page_icon="🎬")
 st.title("Video Greeting Generator")
+
+# Add a select box for voice selection
+voice_option = st.selectbox(
+    "Select Voice",
+    options=[
+        ("Barbara Pigg 1", "Ro4VVDudw85O3XfD3nva"),
+        ("ZTS07a VO", "LEbsUt7al3JBfWgXlFFc"),
+    ],
+    format_func=lambda x: x[0],
+)
 
 # Read API key from environment variable
 api_key = st.secrets["ELEVENLABS_API_KEY"]
@@ -83,8 +95,10 @@ else:
             greetings_folder = os.path.join(input_folder, "greetings")
             os.makedirs(greetings_folder, exist_ok=True)
             for name in names:
-                greeting_text = f"Hi {name}!"
-                text_to_speech_file(client, greeting_text, name, greetings_folder)
+                greeting_text = f"{name}!"
+                text_to_speech_file(
+                    client, greeting_text, name, greetings_folder, voice_option[1]
+                )
 
             # Initialize progress bar
             total_videos = len(names)
