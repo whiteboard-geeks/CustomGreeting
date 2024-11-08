@@ -8,7 +8,7 @@ from moviepy.editor import (
     CompositeAudioClip,
     VideoFileClip,
 )
-from elevenlabs import VoiceSettings
+from elevenlabs import VoiceSettings, PronunciationDictionaryVersionLocator
 from elevenlabs.client import ElevenLabs
 
 
@@ -19,20 +19,35 @@ def create_silence(duration=1):
 
 # Function to generate greeting and save as MP3
 def text_to_speech_file(
-    client, text: str, name: str, output_folder: str, voice_id: str
+    client,
+    text: str,
+    name: str,
+    output_folder: str,
+    voice_id: str,
+    pronunciation_dict=None,
 ) -> str:
-    response = client.text_to_speech.convert(
-        voice_id=voice_id,
-        output_format="mp3_44100_192",
-        text=text,
-        model_id="eleven_multilingual_v2",
-        voice_settings=VoiceSettings(
+    kwargs = {
+        "voice_id": voice_id,
+        "output_format": "mp3_44100_192",
+        "text": text,
+        "model_id": "eleven_monolingual_v1",
+        "voice_settings": VoiceSettings(
             stability=0.6,
             similarity_boost=0.9,
             style=0.1,
             use_speaker_boost=True,
         ),
-    )
+    }
+
+    if pronunciation_dict:
+        kwargs["pronunciation_dictionary_locators"] = [
+            PronunciationDictionaryVersionLocator(
+                pronunciation_dictionary_id=pronunciation_dict.id,
+                version_id=pronunciation_dict.version_id,
+            )
+        ]
+
+    response = client.text_to_speech.convert(**kwargs)
 
     save_file_path = os.path.join(output_folder, f"{name}.mp3")
     with open(save_file_path, "wb") as f:
@@ -62,6 +77,28 @@ api_key = st.secrets["ELEVENLABS_API_KEY"]
 if not api_key:
     st.error("ELEVENLABS_API_KEY environment variable not set.")
 else:
+    # Create ElevenLabs client first
+    client = ElevenLabs(api_key=api_key)
+
+    # Add pronunciation dictionary file uploader
+    pronunciation_file = st.file_uploader(
+        "Upload Pronunciation Dictionary (Optional)", type=["pls"]
+    )
+    pronunciation_dict = None
+
+    if pronunciation_file is not None:
+        with st.spinner("Uploading pronunciation dictionary..."):
+            try:
+                pronunciation_dict = client.pronunciation_dictionary.add_from_file(
+                    file=pronunciation_file.read(),
+                    name=f"dictionary_{pronunciation_file.name}",
+                )
+                st.success("Pronunciation dictionary uploaded successfully!")
+            except Exception as e:
+                st.error(f"Error uploading pronunciation dictionary: {str(e)}")
+                pronunciation_dict = None
+
+    # Continue with other file uploaders
     base_video = st.file_uploader("Upload Base Video", type=["mp4"])
     music = st.file_uploader("Upload Music", type=["wav"])
     names_input = st.text_area("Enter Names (one per line)")
@@ -73,7 +110,6 @@ else:
         if not base_video or not names_input:
             st.error("Please provide all inputs.")
         else:
-            client = ElevenLabs(api_key=api_key)
             input_folder = "input"
             output_folder = "output"
             os.makedirs(input_folder, exist_ok=True)
@@ -97,7 +133,12 @@ else:
             for name in names:
                 greeting_text = f"{name}!"
                 text_to_speech_file(
-                    client, greeting_text, name, greetings_folder, voice_option[1]
+                    client,
+                    greeting_text,
+                    name,
+                    greetings_folder,
+                    voice_option[1],
+                    pronunciation_dict,
                 )
 
             # Initialize progress bar
