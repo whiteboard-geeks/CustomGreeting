@@ -101,13 +101,24 @@ else:
     # Continue with other file uploaders
     base_video = st.file_uploader("Upload Base Video", type=["mp4"])
     music = st.file_uploader("Upload Music", type=["wav"])
-    names_input = st.text_area("Enter Names (one per line)")
+
+    # New input fields for text customization
+    text_before = st.text_input("Text Before Customization", "Hi")
+    variables_input = st.text_area("Variables (one per line)")
+    text_after = st.text_input("Text After Customization", "!")
+
+    # Show example of the final message using the first variable
+    variables = [var.strip() for var in variables_input.split("\n") if var.strip()]
+    if variables:
+        example_message = f"{text_before} {variables[0]} {text_after}"
+        st.write(f"Example message: {example_message}")
+
     clip_start = st.number_input(
         "Amount to clip from the start of the video", min_value=0.0, value=1.0
     )
 
     if st.button("Generate Videos"):
-        if not base_video or not names_input:
+        if not base_video or not variables_input:
             st.error("Please provide all inputs.")
         else:
             input_folder = "input"
@@ -124,25 +135,22 @@ else:
             with open(music_path, "wb") as f:
                 f.write(music.read())
 
-            # Parse names input
-            names = [name.strip() for name in names_input.split("\n") if name.strip()]
-
             # Generate greetings
             greetings_folder = os.path.join(input_folder, "greetings")
             os.makedirs(greetings_folder, exist_ok=True)
-            for name in names:
-                greeting_text = f"{name}!"
+            for variable in variables:
+                greeting_text = f"{text_before} {variable} {text_after}"
                 text_to_speech_file(
                     client,
                     greeting_text,
-                    name,
+                    variable,  # Use variable as the filename
                     greetings_folder,
                     voice_option[1],
                     pronunciation_dict,
                 )
 
             # Initialize progress bar
-            total_videos = len(names)
+            total_videos = len(variables)
 
             # Process each audio file and create videos
             video = VideoFileClip(base_video_path)
