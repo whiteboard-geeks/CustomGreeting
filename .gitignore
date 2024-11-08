@@ -1,4 +1,5 @@
 /env
 /input
 /output
+.vscode
 /.streamlit/secrets.toml
