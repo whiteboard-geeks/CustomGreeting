@@ -58,6 +58,35 @@ def text_to_speech_file(
     return save_file_path
 
 
+# Function to create an audio clip with greeting and music
+def create_audio_clip(
+    audio_path,
+    video,
+    clip_start,
+    variable_audio_volume_factor,
+    voiceover_volume_factor,
+    music_path,
+    music_volume_factor,
+):
+    audio = AudioFileClip(audio_path)
+    audio = audio.volumex(variable_audio_volume_factor)
+    video_voiceover_audio = video.audio.subclip(clip_start).volumex(
+        voiceover_volume_factor
+    )
+    voiceover_audio_with_greeting = concatenate_audioclips(
+        [audio, video_voiceover_audio]
+    )
+    silence = create_silence(2)
+    voiceover_audio_with_intro_silence = concatenate_audioclips(
+        [silence, voiceover_audio_with_greeting]
+    )
+    music = AudioFileClip(music_path).volumex(music_volume_factor)
+    final_audio = CompositeAudioClip(
+        [voiceover_audio_with_intro_silence, music.set_start(0)]
+    )
+    return final_audio
+
+
 # Streamlit UI
 st.set_page_config(page_title="Video Greeting Generator", page_icon="🎬")
 st.title("Video Greeting Generator")
@@ -141,6 +170,64 @@ else:
     variable_audio_volume_factor = 10 ** (variable_audio_volume / 20)
     music_volume_factor = 10 ** (music_volume / 20)
 
+    # Add a "Generate Test Audio" button
+    if st.button("Generate Test Audio"):
+        if not base_video or not variables_input:
+            st.error("Please provide all inputs.")
+        else:
+            input_folder = "input"
+            output_folder = "output"
+            os.makedirs(input_folder, exist_ok=True)
+            os.makedirs(output_folder, exist_ok=True)
+
+            # Save uploaded files
+            base_video_path = os.path.join(input_folder, "base_video.mp4")
+            with open(base_video_path, "wb") as f:
+                f.write(base_video.read())
+
+            music_path = os.path.join(input_folder, "music.wav")
+            with open(music_path, "wb") as f:
+                f.write(music.read())
+
+            # Create greetings folder
+            greetings_folder = os.path.join(input_folder, "greetings")
+            os.makedirs(greetings_folder, exist_ok=True)
+
+            # Generate greeting for the first variable
+            if variables:
+                greeting_text = f"{text_before} {variables[0]} {text_after}"
+                audio_filename = text_to_speech_file(
+                    client,
+                    greeting_text,
+                    variables[0],  # Use the first variable as the filename
+                    greetings_folder,
+                    voice_option[1],
+                    pronunciation_dict,
+                )
+
+                # Process the audio file and create a test video
+                video = VideoFileClip(base_video_path)
+                audio_path = os.path.join(greetings_folder, f"{variables[0]}.mp3")
+                final_audio = create_audio_clip(
+                    audio_path,
+                    video,
+                    clip_start,
+                    variable_audio_volume_factor,
+                    voiceover_volume_factor,
+                    music_path,
+                    music_volume_factor,
+                )
+                final_video = video.set_audio(final_audio)
+                test_output_filename = f"test_{variables[0]}.mp4"
+                test_output_path = os.path.join(output_folder, test_output_filename)
+                final_video.write_videofile(
+                    test_output_path, codec="libx264", audio_codec="aac"
+                )
+
+                st.success("Test audio generated successfully!")
+                st.video(test_output_path)
+
+    # Move the "Generate Videos" button here
     if st.button("Generate Videos"):
         if not base_video or not variables_input:
             st.error("Please provide all inputs.")
