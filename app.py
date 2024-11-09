@@ -205,7 +205,51 @@ else:
                     pronunciation_dict,
                 )
 
-                # Process the audio file and create a test video
+                # Create the full audio track
+                video = VideoFileClip(base_video_path)
+                audio_path = os.path.join(greetings_folder, f"{variables[0]}.mp3")
+                final_audio = create_audio_clip(
+                    audio_path,
+                    video,
+                    clip_start,
+                    variable_audio_volume_factor,
+                    voiceover_volume_factor,
+                    music_path,
+                    music_volume_factor,
+                )
+                test_audio_path = os.path.join(
+                    output_folder, f"test_{variables[0]}.mp3"
+                )
+                final_audio.write_audiofile(test_audio_path, fps=44100)
+
+                st.success("Test audio generated successfully!")
+                st.audio(test_audio_path)
+
+    # Add a "Generate Test Video" button
+    if st.button("Generate Test Video"):
+        if not base_video or not variables_input:
+            st.error("Please provide all inputs.")
+        else:
+            input_folder = "input"
+            output_folder = "output"
+            os.makedirs(input_folder, exist_ok=True)
+            os.makedirs(output_folder, exist_ok=True)
+
+            # Save uploaded files
+            base_video_path = os.path.join(input_folder, "base_video.mp4")
+            with open(base_video_path, "wb") as f:
+                f.write(base_video.read())
+
+            music_path = os.path.join(input_folder, "music.wav")
+            with open(music_path, "wb") as f:
+                f.write(music.read())
+
+            # Create greetings folder
+            greetings_folder = os.path.join(input_folder, "greetings")
+            os.makedirs(greetings_folder, exist_ok=True)
+
+            # Use the existing audio file to create a test video
+            if variables:
                 video = VideoFileClip(base_video_path)
                 audio_path = os.path.join(greetings_folder, f"{variables[0]}.mp3")
                 final_audio = create_audio_clip(
@@ -224,7 +268,7 @@ else:
                     test_output_path, codec="libx264", audio_codec="aac"
                 )
 
-                st.success("Test audio generated successfully!")
+                st.success("Test video generated successfully!")
                 st.video(test_output_path)
 
     # Move the "Generate Videos" button here
@@ -276,24 +320,14 @@ else:
                             and not audio_filename == ".mp3"
                         ):
                             audio_path = os.path.join(greetings_folder, audio_filename)
-                            audio = AudioFileClip(audio_path)
-                            audio = audio.volumex(variable_audio_volume_factor)
-                            video_voiceover_audio = video.audio.subclip(clip_start)
-                            video_voiceover_audio = video.audio.subclip(
-                                clip_start
-                            ).volumex(voiceover_volume_factor)
-                            voiceover_audio_with_greeting = concatenate_audioclips(
-                                [audio, video_voiceover_audio]
-                            )
-                            silence = create_silence(2)
-                            voiceover_audio_with_intro_silence = concatenate_audioclips(
-                                [silence, voiceover_audio_with_greeting]
-                            )
-                            music = AudioFileClip(music_path).volumex(
-                                music_volume_factor
-                            )
-                            final_audio = CompositeAudioClip(
-                                [voiceover_audio_with_intro_silence, music.set_start(0)]
+                            final_audio = create_audio_clip(
+                                audio_path,
+                                video,
+                                clip_start,
+                                variable_audio_volume_factor,
+                                voiceover_volume_factor,
+                                music_path,
+                                music_volume_factor,
                             )
                             final_video = video.set_audio(final_audio)
                             output_filename = (
