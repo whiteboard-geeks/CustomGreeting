@@ -117,6 +117,30 @@ else:
         "Amount to clip from the start of the video", min_value=0.0, value=1.0
     )
 
+    # Add volume sliders for each audio component with additional instructions
+    st.markdown("**Voiceover Volume**")
+    st.caption("0 is the volume you upload at")
+    voiceover_volume = st.slider(
+        "Voiceover Volume", min_value=-100, max_value=100, value=0, step=5
+    )
+
+    st.markdown("**Variable Audio Volume**")
+    st.caption("0 is the volume you upload at")
+    variable_audio_volume = st.slider(
+        "Variable Audio Volume", min_value=-100, max_value=100, value=0, step=5
+    )
+
+    st.markdown("**Music Volume**")
+    st.caption("0 is the volume you upload at")
+    music_volume = st.slider(
+        "Music Volume", min_value=-100, max_value=100, value=0, step=5
+    )
+
+    # Convert slider values to a scale factor
+    voiceover_volume_factor = 10 ** (voiceover_volume / 20)
+    variable_audio_volume_factor = 10 ** (variable_audio_volume / 20)
+    music_volume_factor = 10 ** (music_volume / 20)
+
     if st.button("Generate Videos"):
         if not base_video or not variables_input:
             st.error("Please provide all inputs.")
@@ -166,7 +190,11 @@ else:
                         ):
                             audio_path = os.path.join(greetings_folder, audio_filename)
                             audio = AudioFileClip(audio_path)
+                            audio = audio.volumex(variable_audio_volume_factor)
                             video_voiceover_audio = video.audio.subclip(clip_start)
+                            video_voiceover_audio = video.audio.subclip(
+                                clip_start
+                            ).volumex(voiceover_volume_factor)
                             voiceover_audio_with_greeting = concatenate_audioclips(
                                 [audio, video_voiceover_audio]
                             )
@@ -174,7 +202,9 @@ else:
                             voiceover_audio_with_intro_silence = concatenate_audioclips(
                                 [silence, voiceover_audio_with_greeting]
                             )
-                            music = AudioFileClip(music_path).volumex(0.05)
+                            music = AudioFileClip(music_path).volumex(
+                                music_volume_factor
+                            )
                             final_audio = CompositeAudioClip(
                                 [voiceover_audio_with_intro_silence, music.set_start(0)]
                             )
