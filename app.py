@@ -11,10 +11,6 @@ from moviepy.editor import (
 from elevenlabs import VoiceSettings, PronunciationDictionaryVersionLocator
 from elevenlabs.client import ElevenLabs
 
-# Get the port from the environment variable
-port = int(os.environ.get("PORT", 8501))
-st.set_option("server.port", port)
-
 
 # Function to create a one-second silent audio clip
 def create_silence(duration=1):
