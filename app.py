@@ -102,7 +102,7 @@ voice_option = st.selectbox(
 )
 
 # Read API key from environment variable
-api_key = st.secrets["ELEVENLABS_API_KEY"]
+api_key = os.environ.get("ELEVENLABS_API_KEY")
 if not api_key:
     st.error("ELEVENLABS_API_KEY environment variable not set.")
 else:
