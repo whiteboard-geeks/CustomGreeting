@@ -95,19 +95,36 @@ st.title("Video Greeting Generator")
 voice_option = st.selectbox(
     "Select Voice",
     options=[
-        ("Barbara Pigg 1", "Ro4VVDudw85O3XfD3nva"),
-        ("ZTS07a VO", "LEbsUt7al3JBfWgXlFFc"),
+        ("Barbara Pigg", "Ro4VVDudw85O3XfD3nva", "primary"),
+        ("ZTS07a VO", "LEbsUt7al3JBfWgXlFFc", "primary"),
+        ("April Lowrie Pro", "Ww6IPT0jYNzyTUBnXTDG", "alt"),
     ],
     format_func=lambda x: x[0],
 )
 
-# Read API key from environment variable
-api_key = os.environ.get("ELEVENLABS_API_KEY")
-if not api_key:
+# Read API keys from environment variables
+primary_api_key = os.environ.get("ELEVENLABS_API_KEY")
+alt_api_key = os.environ.get("ELEVENLABS_API_KEY_ALT")
+
+client_registry = {}
+if primary_api_key:
+    client_registry["primary"] = ElevenLabs(api_key=primary_api_key)
+if alt_api_key:
+    client_registry["alt"] = ElevenLabs(api_key=alt_api_key)
+
+if "primary" not in client_registry:
     st.error("ELEVENLABS_API_KEY environment variable not set.")
 else:
-    # Create ElevenLabs client first
-    client = ElevenLabs(api_key=api_key)
+    # Determine which client to use for the selected voice
+    selected_label = voice_option[2]
+    if selected_label not in client_registry:
+        st.error(
+            f"Selected voice '{voice_option[0]}' requires an API key that has not been provided."
+        )
+        st.stop()
+
+    # Alias the chosen client so the rest of the code remains unchanged
+    client = client_registry[selected_label]
 
     # Add pronunciation dictionary file uploader
     pronunciation_file = st.file_uploader(
