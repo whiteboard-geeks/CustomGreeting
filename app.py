@@ -30,7 +30,7 @@ def text_to_speech_file(
         "voice_id": voice_id,
         "output_format": "mp3_44100_192",
         "text": text,
-        "model_id": "eleven_monolingual_v1",
+        "model_id": "eleven_multilingual_v2",
         "voice_settings": VoiceSettings(
             stability=0.6,
             similarity_boost=0.9,
