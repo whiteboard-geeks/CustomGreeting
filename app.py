@@ -1,5 +1,8 @@
 import os
 import zipfile
+import shutil
+import time
+import uuid
 import streamlit as st
 from moviepy.editor import (
     AudioFileClip,
@@ -88,9 +91,43 @@ def create_audio_clip(
     return final_audio
 
 
+def get_session_paths():
+    if "session_id" not in st.session_state:
+        st.session_state["session_id"] = uuid.uuid4()
+
+    session_id = st.session_state["session_id"]
+    base_dir = os.path.join("temp_data", str(session_id))
+    input_folder = os.path.join(base_dir, "input")
+    output_folder = os.path.join(base_dir, "output")
+    return input_folder, output_folder
+
+
+def cleanup_old_sessions(max_age_seconds=3600):
+    temp_data_dir = "temp_data"
+    if not os.path.exists(temp_data_dir):
+        return
+
+    current_time = time.time()
+    for item in os.listdir(temp_data_dir):
+        item_path = os.path.join(temp_data_dir, item)
+        if os.path.isdir(item_path):
+            try:
+                # Check modification time
+                if current_time - os.path.getmtime(item_path) > max_age_seconds:
+                    shutil.rmtree(item_path)
+            except Exception as e:
+                print(f"Error cleaning up {item_path}: {e}")
+
+
 # Streamlit UI
 st.set_page_config(page_title="Video Greeting Generator", page_icon="🎬")
 st.title("Video Greeting Generator")
+
+# Initialize session and clean up old files on first load
+if "session_id" not in st.session_state:
+    st.session_state["session_id"] = uuid.uuid4()
+    cleanup_old_sessions()
+
 
 # Add a select box for voice selection
 voice_option = st.selectbox(
@@ -194,8 +231,7 @@ else:
             st.error("Please provide all inputs.")
         else:
             with st.spinner("Generating test audio..."):
-                input_folder = "input"
-                output_folder = "output"
+                input_folder, output_folder = get_session_paths()
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
 
@@ -250,8 +286,7 @@ else:
             st.error("Please provide all inputs.")
         else:
             with st.spinner("Generating test video..."):
-                input_folder = "input"
-                output_folder = "output"
+                input_folder, output_folder = get_session_paths()
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
 
@@ -297,8 +332,7 @@ else:
             st.error("Please provide all inputs.")
         else:
             with st.spinner("Generating videos..."):
-                input_folder = "input"
-                output_folder = "output"
+                input_folder, output_folder = get_session_paths()
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
 

@@ -3,3 +3,4 @@
 /output
 .vscode
 /.streamlit/secrets.toml
+/temp_data
