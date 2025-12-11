@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: video-greeting-generator
+    env: docker
+    plan: standard  # free/ starter / standard, etc.
+    region: oregon  # adjust if you use another region
+    rootDir: .
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: ELEVENLABS_API_KEY
+        sync: false      # set in Render dashboard
+      - key: ELEVENLABS_API_KEY_ALT
+        sync: false      # also set in Render dashboard if used
