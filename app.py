@@ -165,6 +165,8 @@ voice_option = st.selectbox(
         ("Barbara Pigg", "Ro4VVDudw85O3XfD3nva", "primary"),
         ("ZTS07a VO", "LEbsUt7al3JBfWgXlFFc", "primary"),
         ("April Lowrie Pro", "Ww6IPT0jYNzyTUBnXTDG", "alt"),
+        ("Dale - YourCause", "xUeVfoX4TgqQTP9P2Rns", "alt"),
+        ("Mark Davis", "gVSJ0zoFJ1Wgov5gD1Pi", "alt"),
     ],
     format_func=lambda x: x[0],
 )
