@@ -21,15 +21,107 @@ import fingerprint as fp_mod
 db.init_db()
 
 
+QA_SHORTCUTS_JS = """
+<script>
+(function() {
+    const doc = window.parent.document;
+    if (window.__cg_qa_kbd) return;            // attach once across reruns
+    window.__cg_qa_kbd = true;
+
+    const findButton = (predicate) => {
+        for (const b of doc.querySelectorAll('button')) {
+            if (predicate(b)) return b;
+        }
+        return null;
+    };
+    const click = (text) => {
+        const b = findButton(b => b.innerText.trim().includes(text));
+        if (b) { b.click(); return true; }
+        return false;
+    };
+    const getVideo = () => doc.querySelector('video');
+    const seek = (delta) => {
+        const v = getVideo();
+        if (!v) return;
+        v.currentTime = Math.max(0, Math.min((v.duration || 0), v.currentTime + delta));
+    };
+
+    doc.addEventListener('keydown', (e) => {
+        // Don't steal keys when the user is typing.
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        const k = e.key.toLowerCase();
+        let handled = true;
+        switch (k) {
+            case 'a':         click('Approve'); break;
+            case 'r':         click('Reject'); break;
+            case 'n':
+            case 'arrowright':click('Next →'); break;
+            case 'p':
+            case 'arrowleft': click('← Prev'); break;
+            case ' ':
+            case 'k': {
+                const v = getVideo();
+                if (v) { v.paused ? v.play() : v.pause(); }
+                break;
+            }
+            case 'j':  seek(-5); break;
+            case 'l':  seek(5);  break;
+            case ',':  seek(-1); break;   // frame-ish back
+            case '.':  seek(1);  break;   // frame-ish forward
+            case 'home': { const v = getVideo(); if (v) v.currentTime = 0; break; }
+            case 'end':  { const v = getVideo(); if (v) v.currentTime = v.duration; break; }
+            case '0': case '1': case '2': case '3': case '4':
+            case '5': case '6': case '7': case '8': case '9': {
+                const v = getVideo();
+                if (v && v.duration) v.currentTime = v.duration * (parseInt(k) / 10);
+                break;
+            }
+            case 'm': {
+                const v = getVideo();
+                if (v) v.muted = !v.muted;
+                break;
+            }
+            default: handled = false;
+        }
+        if (handled) e.preventDefault();
+    });
+})();
+</script>
+"""
+
+
 def _render_wave_qa_ui(wave: dict) -> None:
     """Show a focused QA queue for a single wave. Streams one video at a
     time so 100+ name waves stay responsive. Bulk-imports the approved
     videos into the QA library when the user is done."""
+    import streamlit.components.v1 as components
+    components.html(QA_SHORTCUTS_JS, height=0)
+
     st.markdown(f"## 📂 Wave: {wave['name']}")
     st.caption(
         f"Voice: **{wave['voice_name']}** · "
         f"text: `{wave['text_before']} <name>{wave['text_after']}`"
     )
+    with st.expander("⌨️ Keyboard shortcuts", expanded=False):
+        st.markdown(
+            """
+| Key | Action |
+|-----|--------|
+| **A** | Approve current video |
+| **R** | Reject current video |
+| **N** / **→** | Next pending video |
+| **P** / **←** | Previous pending video |
+| **Space** / **K** | Play / pause |
+| **J** / **L** | Seek -5s / +5s |
+| **,** / **.** | Seek -1s / +1s |
+| **0 – 9** | Jump to 0%, 10%, …, 90% |
+| **Home** / **End** | Start / end of clip |
+| **M** | Mute / unmute |
+
+Shortcuts pause while you're typing in a text box.
+"""
+        )
 
     videos = db.list_wave_videos(wave["id"])
     if not videos:
