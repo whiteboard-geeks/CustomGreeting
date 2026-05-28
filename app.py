@@ -382,21 +382,9 @@ if "session_id" not in st.session_state:
     st.session_state["session_id"] = uuid.uuid4()
     cleanup_old_sessions()
 
-# Safety toggle: when off, the app behaves like the original (no QA registry).
-with st.sidebar:
-    st.subheader("QA library")
-    use_qa_library = st.checkbox(
-        "Reuse previously QA'ed videos",
-        value=True,
-        help="When on, names that already exist in the QA library are copied "
-             "from there instead of being regenerated. Turn off to force fresh "
-             "generation for every name.",
-    )
-    library_bv_count = len(db.list_base_videos())
-    library_music_count = len(db.list_music_tracks())
-    st.caption(
-        f"Library: {library_bv_count} base videos, {library_music_count} music tracks"
-    )
+# Reuse from the QA library by default. No UI toggle — if a name is in the
+# library, we reuse it.
+use_qa_library = True
 
 
 # Add a select box for voice selection
