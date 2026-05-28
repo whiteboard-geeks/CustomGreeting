@@ -108,6 +108,44 @@ def list_base_videos() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def list_base_videos_for_voice(voice_id: str, voice_name: str) -> list[dict]:
+    """Same as list_base_videos but sorted to surface the ones most likely
+    relevant for this voice:
+      1. Most recently used WITH this voice (via qa_videos timestamps)
+      2. Then base videos whose name starts with the voice's first name
+         (canonical files are named like 'Barbara_*' / 'April_*')
+      3. Then everything else, alphabetical
+    """
+    all_videos = list_base_videos()
+    first_name = voice_name.split()[0].lower() if voice_name else ""
+
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT base_video_id, MAX(created_at) AS last_used "
+            "FROM qa_videos WHERE voice_id = ? GROUP BY base_video_id "
+            "ORDER BY last_used DESC",
+            (voice_id,),
+        ).fetchall()
+    last_used = {r["base_video_id"]: r["last_used"] for r in rows}
+
+    def sort_key(v):
+        recency_rank = -1 if v["id"] not in last_used else 0
+        recency_ts = last_used.get(v["id"], "")
+        name_match = 0 if first_name and v["name"].lower().startswith(first_name) else 1
+        return (recency_rank, -ord(recency_ts[0]) if recency_ts else 0,
+                name_match, v["name"].lower())
+
+    # Two-pass sort: prefer last_used DESC, then name_match, then alpha.
+    used = [v for v in all_videos if v["id"] in last_used]
+    used.sort(key=lambda v: last_used[v["id"]], reverse=True)
+    unused = [v for v in all_videos if v["id"] not in last_used]
+    unused.sort(key=lambda v: (
+        0 if first_name and v["name"].lower().startswith(first_name) else 1,
+        v["name"].lower(),
+    ))
+    return used + unused
+
+
 def find_matching_base_video(fingerprint: dict, transcript: str | None = None) -> dict | None:
     """Return the existing base_video that matches this fingerprint, or None.
 
@@ -179,9 +217,33 @@ def register_base_video(name: str, source_path: str, fingerprint: dict,
 def list_music_tracks() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, duration, file_path FROM music_tracks ORDER BY name"
+            "SELECT id, name, duration, file_hash, file_path FROM music_tracks ORDER BY name"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_music_for_voice(voice_id: str, voice_name: str) -> list[dict]:
+    """Like list_music_tracks but voice-sorted (recency, then voice-name prefix)."""
+    all_music = list_music_tracks()
+    first_name = voice_name.split()[0].lower() if voice_name else ""
+
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT music_id, MAX(created_at) AS last_used "
+            "FROM qa_videos WHERE voice_id = ? AND music_id IS NOT NULL "
+            "GROUP BY music_id ORDER BY last_used DESC",
+            (voice_id,),
+        ).fetchall()
+    last_used = {r["music_id"]: r["last_used"] for r in rows}
+
+    used = [m for m in all_music if m["id"] in last_used]
+    used.sort(key=lambda m: last_used[m["id"]], reverse=True)
+    unused = [m for m in all_music if m["id"] not in last_used]
+    unused.sort(key=lambda m: (
+        0 if first_name and m["name"].lower().startswith(first_name) else 1,
+        m["name"].lower(),
+    ))
+    return used + unused
 
 
 def find_matching_music(fingerprint: dict) -> dict | None:

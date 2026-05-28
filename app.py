@@ -20,6 +20,118 @@ import fingerprint as fp_mod
 db.init_db()
 
 
+def _select_or_upload_base_video(voice_id: str, voice_name: str):
+    """Render the Library / Upload chooser for the base video. Stores the choice
+    in session state and returns a (source_type, identifier) tuple that the
+    generation flow can resolve into bytes via `read_base_video_bytes()`."""
+    library = db.list_base_videos_for_voice(voice_id, voice_name)
+    has_library = bool(library)
+    options = []
+    if has_library:
+        options.append("Select from library")
+    options.append("Upload new")
+
+    default_index = 0  # Library if available, else Upload
+    source_choice = st.radio(
+        "Base Video",
+        options=options,
+        horizontal=True,
+        index=default_index,
+        key=f"bv_source_{voice_id}",
+    )
+
+    if source_choice == "Select from library":
+        labels = [
+            f"{bv['name']}  •  {bv['duration']}s  •  {bv['resolution']}"
+            for bv in library
+        ]
+        idx = st.selectbox(
+            "Choose a base video",
+            options=list(range(len(library))),
+            format_func=lambda i: labels[i],
+            key=f"bv_pick_{voice_id}",
+        )
+        chosen = library[idx]
+        st.caption(f"Using `{chosen['file_path']}`")
+        st.session_state["_bv_source"] = {"type": "library", "path": chosen["file_path"],
+                                           "name": chosen["name"]}
+        return
+    # Upload new
+    uploaded = st.file_uploader("Upload Base Video", type=["mp4"], key="bv_upload")
+    _detect_uploaded_base_video(uploaded)
+    if uploaded is not None:
+        st.session_state["_bv_source"] = {"type": "upload", "uploaded": uploaded,
+                                           "name": uploaded.name}
+    else:
+        st.session_state.pop("_bv_source", None)
+
+
+def _select_or_upload_music(voice_id: str, voice_name: str):
+    """Library / Upload chooser for the music track."""
+    library = db.list_music_for_voice(voice_id, voice_name)
+    has_library = bool(library)
+    options = []
+    if has_library:
+        options.append("Select from library")
+    options.append("Upload new")
+
+    source_choice = st.radio(
+        "Music",
+        options=options,
+        horizontal=True,
+        index=0,
+        key=f"music_source_{voice_id}",
+    )
+
+    if source_choice == "Select from library":
+        labels = [f"{m['name']}  •  {m['duration']}s" for m in library]
+        idx = st.selectbox(
+            "Choose a music track",
+            options=list(range(len(library))),
+            format_func=lambda i: labels[i],
+            key=f"music_pick_{voice_id}",
+        )
+        chosen = library[idx]
+        st.caption(f"Using `{chosen['file_path']}`")
+        st.session_state["_music_source"] = {"type": "library", "path": chosen["file_path"],
+                                              "name": chosen["name"]}
+        return
+    uploaded = st.file_uploader("Upload Music", type=["wav"], key="music_upload")
+    _detect_uploaded_music(uploaded)
+    if uploaded is not None:
+        st.session_state["_music_source"] = {"type": "upload", "uploaded": uploaded,
+                                              "name": uploaded.name}
+    else:
+        st.session_state.pop("_music_source", None)
+
+
+def _read_source_bytes(src: dict | None) -> bytes | None:
+    if not src:
+        return None
+    if src["type"] == "upload":
+        return src["uploaded"].getvalue()
+    if src["type"] == "library":
+        with open(src["path"], "rb") as f:
+            return f.read()
+    return None
+
+
+def read_base_video_bytes() -> bytes | None:
+    return _read_source_bytes(st.session_state.get("_bv_source"))
+
+
+def read_music_bytes() -> bytes | None:
+    return _read_source_bytes(st.session_state.get("_music_source"))
+
+
+def has_base_video() -> bool:
+    return st.session_state.get("_bv_source") is not None
+
+
+def has_music() -> bool:
+    return st.session_state.get("_music_source") is not None
+
+
 def _detect_uploaded_base_video(uploaded_file) -> None:
     """Show a banner if an uploaded base video matches one already in the library."""
     if uploaded_file is None:
@@ -285,11 +397,9 @@ else:
                 st.error(f"Error uploading pronunciation dictionary: {str(e)}")
                 pronunciation_dict = None
 
-    # Continue with other file uploaders
-    base_video = st.file_uploader("Upload Base Video", type=["mp4"])
-    _detect_uploaded_base_video(base_video)
-    music = st.file_uploader("Upload Music", type=["wav"])
-    _detect_uploaded_music(music)
+    # Base video + music: pick from library, or upload a new one.
+    _select_or_upload_base_video(voice_option[1], voice_option[0])
+    _select_or_upload_music(voice_option[1], voice_option[0])
 
     # New input fields for text customization
     text_before = st.text_input("Text Before Customization", "Hi")
@@ -332,7 +442,7 @@ else:
 
     # Add a "Generate Test Audio" button
     if st.button("Generate Test Audio"):
-        if not base_video or not variables_input:
+        if not has_base_video() or not has_music() or not variables_input:
             st.error("Please provide all inputs.")
         else:
             with st.spinner("Generating test audio..."):
@@ -340,14 +450,14 @@ else:
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
 
-                # Save uploaded files
+                # Save base video + music (from library or upload)
                 base_video_path = os.path.join(input_folder, "base_video.mp4")
                 with open(base_video_path, "wb") as f:
-                    f.write(base_video.read())
+                    f.write(read_base_video_bytes())
 
                 music_path = os.path.join(input_folder, "music.wav")
                 with open(music_path, "wb") as f:
-                    f.write(music.read())
+                    f.write(read_music_bytes())
 
                 # Create greetings folder
                 greetings_folder = os.path.join(input_folder, "greetings")
@@ -387,7 +497,7 @@ else:
 
     # Add a "Generate Test Video" button
     if st.button("Generate Test Video"):
-        if not base_video or not variables_input:
+        if not has_base_video() or not has_music() or not variables_input:
             st.error("Please provide all inputs.")
         else:
             with st.spinner("Generating test video..."):
@@ -395,14 +505,14 @@ else:
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
 
-                # Save uploaded files
+                # Save base video + music (from library or upload)
                 base_video_path = os.path.join(input_folder, "base_video.mp4")
                 with open(base_video_path, "wb") as f:
-                    f.write(base_video.read())
+                    f.write(read_base_video_bytes())
 
                 music_path = os.path.join(input_folder, "music.wav")
                 with open(music_path, "wb") as f:
-                    f.write(music.read())
+                    f.write(read_music_bytes())
 
                 # Create greetings folder
                 greetings_folder = os.path.join(input_folder, "greetings")
@@ -433,7 +543,7 @@ else:
 
     # Move the "Generate Videos" button here
     if st.button("Generate Videos"):
-        if not base_video or not variables_input:
+        if not has_base_video() or not has_music() or not variables_input:
             st.error("Please provide all inputs.")
         else:
             with st.spinner("Generating videos..."):
@@ -441,14 +551,14 @@ else:
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
 
-                # Save uploaded files
+                # Save base video + music (from library or upload)
                 base_video_path = os.path.join(input_folder, "base_video.mp4")
                 with open(base_video_path, "wb") as f:
-                    f.write(base_video.read())
+                    f.write(read_base_video_bytes())
 
                 music_path = os.path.join(input_folder, "music.wav")
                 with open(music_path, "wb") as f:
-                    f.write(music.read())
+                    f.write(read_music_bytes())
 
                 # Generate greetings
                 greetings_folder = os.path.join(input_folder, "greetings")
