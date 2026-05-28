@@ -83,6 +83,8 @@ def _select_or_upload_base_video(voice_id: str, voice_name: str):
         st.caption(_voice_usage_caption(chosen.get("last_used_with_voice"), voice_name))
         st.session_state["_bv_source"] = {"type": "library", "path": chosen["file_path"],
                                            "name": chosen["name"], "id": chosen["id"]}
+        with st.expander("Preview base video", expanded=False):
+            st.video(chosen["file_path"])
         return
     # Upload new — try to match against the library so the QA registry stays useful.
     uploaded = st.file_uploader("Upload Base Video", type=["mp4"], key="bv_upload")
@@ -90,6 +92,8 @@ def _select_or_upload_base_video(voice_id: str, voice_name: str):
     if uploaded is not None:
         st.session_state["_bv_source"] = {"type": "upload", "uploaded": uploaded,
                                            "name": uploaded.name, "id": matched_id}
+        with st.expander("Preview base video", expanded=False):
+            st.video(uploaded)
     else:
         st.session_state.pop("_bv_source", None)
 
@@ -123,12 +127,16 @@ def _select_or_upload_music(voice_id: str, voice_name: str):
         st.caption(_voice_usage_caption(chosen.get("last_used_with_voice"), voice_name))
         st.session_state["_music_source"] = {"type": "library", "path": chosen["file_path"],
                                               "name": chosen["name"], "id": chosen["id"]}
+        with st.expander("Preview music", expanded=False):
+            st.audio(chosen["file_path"])
         return
     uploaded = st.file_uploader("Upload Music", type=["wav"], key="music_upload")
     matched_id = _detect_uploaded_music(uploaded)
     if uploaded is not None:
         st.session_state["_music_source"] = {"type": "upload", "uploaded": uploaded,
                                               "name": uploaded.name, "id": matched_id}
+        with st.expander("Preview music", expanded=False):
+            st.audio(uploaded)
     else:
         st.session_state.pop("_music_source", None)
 
@@ -382,9 +390,9 @@ if "session_id" not in st.session_state:
     st.session_state["session_id"] = uuid.uuid4()
     cleanup_old_sessions()
 
-# Reuse from the QA library by default. No UI toggle — if a name is in the
-# library, we reuse it.
-use_qa_library = True
+# Reuse from the QA library by default. The user can flip this off per-batch
+# to force fresh generation for every name.
+use_qa_library = True  # set below after the variables section
 
 
 # Add a select box for voice selection
@@ -457,15 +465,40 @@ else:
         example_message = f"{text_before} {variables[0]} {text_after}"
         st.write(f"Example message: {example_message}")
 
+    # Per-batch override: skip the QA library and regenerate everything fresh.
+    force_fresh = st.checkbox(
+        "Force fresh generation (ignore QA library)",
+        value=False,
+        help="When checked, every name is regenerated from scratch — useful "
+             "if a previous QA'ed version went bad or settings changed.",
+    )
+    use_qa_library = not force_fresh
+
     # Live QA split preview — recalculates as the user types/changes inputs.
     qa_split = _compute_qa_split(variables, voice_option[1], use_qa_library)
     if variables:
-        if qa_split["enabled"] and qa_split["already_qaed"]:
-            st.success(
-                f"✅ {len(qa_split['already_qaed'])} of {len(variables)} names "
-                f"are already QA'ed — only {len(qa_split['needs_generation'])} "
-                "will be generated fresh."
+        if force_fresh:
+            st.warning(
+                f"⚠️ Force-fresh is on — all {len(variables)} names will be "
+                "regenerated, even if they're in the QA library."
             )
+        elif qa_split["enabled"] and qa_split["already_qaed"]:
+            with st.container():
+                st.success(
+                    f"✅ {len(qa_split['already_qaed'])} of {len(variables)} names "
+                    f"are already QA'ed — only {len(qa_split['needs_generation'])} "
+                    "will be generated fresh."
+                )
+                with st.expander(f"Preview an already-QA'ed video", expanded=False):
+                    sample = qa_split["already_qaed"][0]
+                    st.caption(f"Showing **{sample['variable']}** from the library")
+                    if os.path.isfile(sample["file_path"]):
+                        st.video(sample["file_path"])
+                    else:
+                        st.warning(
+                            f"Library file not found at {sample['file_path']}. "
+                            "(Phase 0 seed may still be syncing.)"
+                        )
         elif qa_split["enabled"]:
             st.info(
                 f"ℹ️ None of these {len(variables)} names are in the QA library — "
