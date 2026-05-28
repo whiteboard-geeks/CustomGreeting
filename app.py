@@ -1,3 +1,4 @@
+import hashlib
 import os
 import zipfile
 import shutil
@@ -450,6 +451,30 @@ def create_silence(duration=1):
     return AudioClip(lambda t: 0, duration=duration)
 
 
+DEFAULT_MODEL_ID = "eleven_v3"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def list_tts_models(api_key_fingerprint: str) -> list[dict]:
+    """Return [{'model_id', 'name'}] for every TTS-capable model. Cached for
+    10 minutes per API key. We pass an opaque fingerprint of the key so the
+    cache is per-account but the key itself never lands in cache metadata."""
+    primary = os.environ.get("ELEVENLABS_API_KEY")
+    alt = os.environ.get("ELEVENLABS_API_KEY_ALT")
+    seen: dict[str, str] = {}  # model_id -> friendly name
+    for key in (primary, alt):
+        if not key:
+            continue
+        try:
+            c = ElevenLabs(api_key=key)
+            for m in c.models.get_all():
+                if getattr(m, "can_do_text_to_speech", False):
+                    seen.setdefault(m.model_id, m.name)
+        except Exception:
+            continue
+    return [{"model_id": mid, "name": name} for mid, name in seen.items()]
+
+
 # Function to generate greeting and save as MP3
 def text_to_speech_file(
     client,
@@ -458,16 +483,16 @@ def text_to_speech_file(
     output_folder: str,
     voice_id: str,
     pronunciation_dict=None,
+    model_id: str = DEFAULT_MODEL_ID,
 ) -> str:
     kwargs = {
         "voice_id": voice_id,
         "output_format": "mp3_44100_192",
         "text": text,
-        # Newest model (May 2026). Most expressive, 70+ languages.
-        # Alias-style pronunciation dictionary entries are honored; phoneme
-        # (IPA/CMU) entries are not — but our dictionaries are alias-only.
+        # language_code is honored as a hard lock by turbo_v2_5 / flash_v2_5,
+        # advisory for multilingual_v2 / v3. We send it anyway as a hint.
         "language_code": "en",
-        "model_id": "eleven_v3",
+        "model_id": model_id,
         "voice_settings": VoiceSettings(
             stability=0.6,
             similarity_boost=0.9,
@@ -626,6 +651,37 @@ else:
     st.session_state["_active_voice_id"] = voice_option[1]
     st.session_state["_active_voice_name"] = voice_option[0]
 
+    # Advanced: which TTS model to use. Hidden by default; dynamically queries
+    # ElevenLabs so newly-released models show up automatically.
+    with st.expander("Advanced settings", expanded=False):
+        api_fp = hashlib.sha256(
+            (os.environ.get("ELEVENLABS_API_KEY", "") + "::" +
+             os.environ.get("ELEVENLABS_API_KEY_ALT", "")).encode()
+        ).hexdigest()[:16]
+        try:
+            tts_models = list_tts_models(api_fp)
+        except Exception as exc:
+            st.warning(f"Couldn't fetch model list: {exc}")
+            tts_models = [{"model_id": DEFAULT_MODEL_ID, "name": "Eleven v3"}]
+
+        model_ids = [m["model_id"] for m in tts_models]
+        if DEFAULT_MODEL_ID not in model_ids:
+            tts_models = [{"model_id": DEFAULT_MODEL_ID, "name": "Eleven v3"}] + tts_models
+            model_ids = [m["model_id"] for m in tts_models]
+
+        default_idx = model_ids.index(DEFAULT_MODEL_ID) if DEFAULT_MODEL_ID in model_ids else 0
+        labels = {m["model_id"]: f"{m['name']}  ({m['model_id']})" for m in tts_models}
+        selected_model_id = st.selectbox(
+            "TTS model",
+            options=model_ids,
+            format_func=lambda mid: labels.get(mid, mid),
+            index=default_idx,
+            key="tts_model_id",
+            help="Default is eleven_v3 (newest). Switch if a voice sounds "
+                 "off or if a name keeps flipping to a non-English accent.",
+        )
+        st.caption(f"Using `{selected_model_id}` for TTS.")
+
     # Base video + music: pick from library, or upload a new one.
     _select_or_upload_base_video(voice_option[1], voice_option[0])
     _select_or_upload_music(voice_option[1], voice_option[0])
@@ -742,6 +798,7 @@ else:
                         greetings_folder,
                         voice_option[1],
                         pronunciation_dict,
+                        model_id=selected_model_id,
                     )
 
                     # Create the full audio track
@@ -845,6 +902,7 @@ else:
                         greetings_folder,
                         voice_option[1],
                         pronunciation_dict,
+                        model_id=selected_model_id,
                     )
 
                 zip_filename = os.path.join(output_folder, "rendered_videos.zip")
