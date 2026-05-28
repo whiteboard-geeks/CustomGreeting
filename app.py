@@ -21,6 +21,131 @@ import fingerprint as fp_mod
 db.init_db()
 
 
+def _render_wave_qa_ui(wave: dict) -> None:
+    """Show a focused QA queue for a single wave. Streams one video at a
+    time so 100+ name waves stay responsive. Bulk-imports the approved
+    videos into the QA library when the user is done."""
+    st.markdown(f"## 📂 Wave: {wave['name']}")
+    st.caption(
+        f"Voice: **{wave['voice_name']}** · "
+        f"text: `{wave['text_before']} <name>{wave['text_after']}`"
+    )
+
+    videos = db.list_wave_videos(wave["id"])
+    if not videos:
+        st.info("This wave has no videos yet. Switch back to 'Start a new wave' to generate.")
+        return
+
+    stats = db.wave_stats(wave["id"])
+    approved = [v for v in videos if v["status"] == "approved"]
+    rejected = [v for v in videos if v["status"] == "rejected"]
+    pending = [v for v in videos if v["status"] == "pending"]
+
+    progress = (stats["approved"] + stats["rejected"]) / max(stats["total"], 1)
+    st.progress(progress, text=f"{stats['approved']} approved · "
+                                 f"{stats['rejected']} rejected · "
+                                 f"{stats['pending']} pending")
+
+    if pending:
+        cursor_key = f"_wave_cursor_{wave['id']}"
+        cursor = st.session_state.get(cursor_key, 0) % len(pending)
+        current = pending[cursor]
+
+        nav_cols = st.columns([1, 4, 1])
+        with nav_cols[0]:
+            if st.button("← Prev", use_container_width=True,
+                         disabled=(cursor == 0),
+                         key=f"prev_{wave['id']}"):
+                st.session_state[cursor_key] = max(0, cursor - 1)
+                st.rerun()
+        with nav_cols[1]:
+            st.markdown(
+                f"**Reviewing `{current['variable']}` "
+                f"({cursor + 1} of {len(pending)} pending)**"
+            )
+        with nav_cols[2]:
+            if st.button("Next →", use_container_width=True,
+                         disabled=(cursor >= len(pending) - 1),
+                         key=f"next_{wave['id']}"):
+                st.session_state[cursor_key] = min(len(pending) - 1, cursor + 1)
+                st.rerun()
+
+        if os.path.isfile(current["file_path"]):
+            st.video(current["file_path"])
+        else:
+            st.warning(f"File missing: {current['file_path']}")
+
+        ar_cols = st.columns(2)
+        with ar_cols[0]:
+            if st.button("✅ Approve", type="primary", use_container_width=True,
+                         key=f"approve_{wave['id']}_{current['variable']}"):
+                db.update_wave_video_status(
+                    wave_id=wave["id"], variable=current["variable"], status="approved",
+                )
+                # Don't advance cursor by index; the list shrinks, so the cursor
+                # naturally points at the next pending item. Clamp instead.
+                pending_after = [v for v in pending if v["variable"] != current["variable"]]
+                st.session_state[cursor_key] = min(cursor, max(0, len(pending_after) - 1))
+                st.rerun()
+        with ar_cols[1]:
+            if st.button("❌ Reject", use_container_width=True,
+                         key=f"reject_{wave['id']}_{current['variable']}"):
+                db.update_wave_video_status(
+                    wave_id=wave["id"], variable=current["variable"], status="rejected",
+                )
+                pending_after = [v for v in pending if v["variable"] != current["variable"]]
+                st.session_state[cursor_key] = min(cursor, max(0, len(pending_after) - 1))
+                st.rerun()
+    else:
+        st.success("🎉 No pending videos left in this wave.")
+
+    with st.expander(f"Approved ({len(approved)}) and rejected ({len(rejected)})",
+                     expanded=False):
+        if approved:
+            st.markdown("**Approved:** " + ", ".join(f"`{v['variable']}`" for v in approved))
+        if rejected:
+            st.markdown("**Rejected:** " + ", ".join(f"`{v['variable']}`" for v in rejected))
+
+    st.divider()
+    st.markdown("### Commit approved videos to the QA library")
+    if not approved:
+        st.caption("Nothing approved yet.")
+    else:
+        st.caption(
+            f"This will add **{len(approved)}** videos to the QA library so "
+            "future generations for this voice / base video / music reuse them."
+        )
+        commit_clicked = st.button(
+            "Add approved videos to the library",
+            type="primary",
+            disabled=(len(approved) == 0),
+        )
+        if commit_clicked:
+            added = 0
+            for v in approved:
+                if v["from_library"]:
+                    continue  # already in the library
+                try:
+                    db.register_qaed_video(
+                        voice_id=wave["voice_id"],
+                        voice_name=wave["voice_name"],
+                        base_video_id=wave["base_video_id"],
+                        music_id=wave["music_id"],
+                        variable=v["variable"],
+                        greeting_text=f"{wave['text_before']} {v['variable']} {wave['text_after']}",
+                        source_path=v["file_path"],
+                        confirmed=True,
+                    )
+                    added += 1
+                except Exception as exc:
+                    st.warning(f"Failed to add {v['variable']}: {exc}")
+            st.success(f"Added {added} approved videos to the QA library.")
+            if stats["pending"] == 0:
+                db.update_wave_status(wave["id"], "completed")
+                st.info(f"Marking wave **{wave['name']}** as completed.")
+            st.rerun()
+
+
 def _handle_qa_upload(uploaded_zip) -> None:
     """Read a zip of QA'ed videos. If manifest.json is present, use its
     voice/base_video/music context. Otherwise, fall back to whichever voice +
@@ -595,16 +720,64 @@ if "session_id" not in st.session_state:
 use_qa_library = True  # set below after the variables section
 
 
+# ---------------------------------------------------------------------------
+# Wave selection: resume an existing one or start a new one. The chosen wave
+# (or absence thereof) drives whether Generate Videos persists state.
+# ---------------------------------------------------------------------------
+open_waves = db.list_waves(status="in_progress")
+wave_options = ["➕ Start a new wave"] + [
+    f"📂 {w['name']}  ({w['voice_name']})" for w in open_waves
+]
+wave_label_to_id = {f"📂 {w['name']}  ({w['voice_name']})": w["id"] for w in open_waves}
+chosen_wave_label = st.selectbox(
+    "Wave",
+    options=wave_options,
+    index=0,
+    help="A wave saves your generated videos + QA progress so you can come "
+         "back and finish later. Pick an open wave to resume it, or start a "
+         "new one (you'll name it before generating).",
+)
+active_wave: dict | None = None
+if chosen_wave_label != wave_options[0]:
+    active_wave_id = wave_label_to_id[chosen_wave_label]
+    active_wave = db.get_wave(active_wave_id)
+    st.session_state["_active_wave_id"] = active_wave_id
+else:
+    st.session_state.pop("_active_wave_id", None)
+
+
+# Wave-resume short-circuit: show the QA queue and skip the rest of the
+# generation form entirely. The wave already holds voice + base video + music
+# + variables, so there's nothing to re-enter.
+if active_wave:
+    _render_wave_qa_ui(active_wave)
+    st.stop()
+
+
+# New-wave name input. Required for Generate Videos so the resulting batch
+# is recoverable; the test buttons don't need it.
+new_wave_name = st.text_input(
+    "New wave name",
+    value="",
+    placeholder="e.g. 'Barbara BC Wave 67' — required for Generate Videos",
+    help="Give this batch a name so you can come back to it later for QA.",
+)
+
+
+# All voice options. We declare them up here so both the dropdown and the
+# wave-resume code can index into the same canonical list.
+ALL_VOICE_OPTIONS = [
+    ("Barbara Pigg", "Ro4VVDudw85O3XfD3nva", "primary"),
+    ("ZTS07a VO", "LEbsUt7al3JBfWgXlFFc", "primary"),
+    ("April Lowrie Pro", "Ww6IPT0jYNzyTUBnXTDG", "alt"),
+    ("Dale - YourCause", "xUeVfoX4TgqQTP9P2Rns", "alt"),
+    ("Mark Davis", "gVSJ0zoFJ1Wgov5gD1Pi", "alt"),
+]
+
 # Add a select box for voice selection
 voice_option = st.selectbox(
     "Select Voice",
-    options=[
-        ("Barbara Pigg", "Ro4VVDudw85O3XfD3nva", "primary"),
-        ("ZTS07a VO", "LEbsUt7al3JBfWgXlFFc", "primary"),
-        ("April Lowrie Pro", "Ww6IPT0jYNzyTUBnXTDG", "alt"),
-        ("Dale - YourCause", "xUeVfoX4TgqQTP9P2Rns", "alt"),
-        ("Mark Davis", "gVSJ0zoFJ1Wgov5gD1Pi", "alt"),
-    ],
+    options=ALL_VOICE_OPTIONS,
     format_func=lambda x: x[0],
 )
 
@@ -909,14 +1082,51 @@ else:
 
     # Move the "Generate Videos" button here
     if st.button("Generate Videos"):
+        wave_name_clean = new_wave_name.strip()
+        bv_src_check = st.session_state.get("_bv_source") or {}
         if not has_base_video() or not has_music() or not variables_input:
             st.error("Please provide all inputs.")
+        elif not wave_name_clean:
+            st.error("Please give the wave a name first (top of the page).")
+        elif not bv_src_check.get("id"):
+            st.error(
+                "Generate requires a base video that's in the library. Either "
+                "select one from the library, or upload one that matches an "
+                "existing entry. (For brand-new base videos, we'll add an "
+                "'Add to library' step later.)"
+            )
+        elif db.get_wave_by_name(wave_name_clean):
+            st.error(
+                f"A wave named **{wave_name_clean}** already exists. Pick a "
+                "different name, or resume it from the Wave dropdown."
+            )
         else:
             split = _compute_qa_split(variables, voice_option[1], use_qa_library)
             with st.spinner("Generating videos..."):
                 input_folder, output_folder = get_session_paths()
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
+
+                bv_src_for_wave = st.session_state.get("_bv_source") or {}
+                music_src_for_wave = st.session_state.get("_music_source") or {}
+                wave_id = db.create_wave(
+                    name=wave_name_clean,
+                    voice_id=voice_option[1],
+                    voice_name=voice_option[0],
+                    base_video_id=bv_src_for_wave["id"],
+                    music_id=music_src_for_wave.get("id"),
+                    text_before=text_before,
+                    text_after=text_after,
+                    settings={
+                        "clip_start": float(clip_start),
+                        "voiceover_volume": float(voiceover_volume),
+                        "variable_audio_volume": float(variable_audio_volume),
+                        "music_volume": float(music_volume),
+                        "model_id": selected_model_id,
+                    },
+                )
+                wave_storage = db.waves_dir() / str(wave_id)
+                wave_storage.mkdir(parents=True, exist_ok=True)
 
                 # Save base video + music (from library or upload)
                 base_video_path = os.path.join(input_folder, "base_video.mp4")
@@ -994,6 +1204,17 @@ else:
                                 )
                                 arcname = f"needs_qa/{output_filename}" if already_qaed else output_filename
                                 zipf.write(output_path, arcname=arcname)
+                                # Persist into the wave folder + register a
+                                # pending wave_video for QA.
+                                variable_name = os.path.splitext(output_filename)[0]
+                                wave_file = wave_storage / output_filename
+                                shutil.copy2(output_path, wave_file)
+                                db.add_wave_video(
+                                    wave_id=wave_id,
+                                    variable=variable_name,
+                                    file_path=str(wave_file),
+                                    from_library=False,
+                                )
                         finally:
                             video.close()
 
@@ -1002,6 +1223,12 @@ else:
                         arcname = f"already_qaed/{item['variable']}.mp4"
                         if os.path.isfile(src):
                             zipf.write(src, arcname=arcname)
+                            db.add_wave_video(
+                                wave_id=wave_id,
+                                variable=item["variable"],
+                                file_path=src,
+                                from_library=True,
+                            )
 
                 # Cleanup
                 for audio_filename in os.listdir(greetings_folder):
@@ -1016,12 +1243,18 @@ else:
                 # Surface the split result so the user knows what happened.
                 if already_qaed:
                     summary = (
+                        f"Wave **{wave_name_clean}** saved. "
                         f"Generated {len(to_generate)} new videos, "
                         f"reused {len(already_qaed)} from the QA library. "
-                        "Zip contains `needs_qa/` and `already_qaed/` folders."
+                        "Switch to the wave from the Wave dropdown above to QA "
+                        "the new videos."
                     )
                 else:
-                    summary = f"Generated {len(to_generate)} videos."
+                    summary = (
+                        f"Wave **{wave_name_clean}** saved with "
+                        f"{len(to_generate)} videos. Switch to the wave from "
+                        "the Wave dropdown above to QA them."
+                    )
 
                 # Stash the zip path + the inputs signature so the download
                 # button survives unrelated reruns. A later input change

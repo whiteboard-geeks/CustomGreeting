@@ -7,6 +7,8 @@ Phase 0: this module only defines the schema and helpers. Nothing in app.py
 reads from it yet.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import shutil
@@ -72,6 +74,38 @@ CREATE TABLE IF NOT EXISTS pending_qa (
     reminder_sent_at TIMESTAMP,
     resolved_at TIMESTAMP
 );
+
+-- Named generation batches. The user can resume an in_progress wave to keep
+-- QA'ing it later and only commit approved videos to the library when ready.
+CREATE TABLE IF NOT EXISTS waves (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    voice_id TEXT NOT NULL,
+    voice_name TEXT NOT NULL,
+    base_video_id INTEGER NOT NULL REFERENCES base_videos(id),
+    music_id INTEGER REFERENCES music_tracks(id),
+    text_before TEXT NOT NULL DEFAULT 'Hi',
+    text_after TEXT NOT NULL DEFAULT '!',
+    settings_json TEXT,
+    status TEXT NOT NULL DEFAULT 'in_progress',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS wave_videos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wave_id INTEGER NOT NULL REFERENCES waves(id),
+    variable TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    notes TEXT,
+    from_library INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(wave_id, variable)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wave_videos_wave ON wave_videos(wave_id, status);
 """
 
 
@@ -386,3 +420,117 @@ def resolve_pending_qa(*, voice_id: str, base_video_id: int,
 
 def _slug(s: str) -> str:
     return "".join(c.lower() if c.isalnum() else "_" for c in s).strip("_")
+
+
+# Waves ---------------------------------------------------------------------
+
+def waves_dir() -> Path:
+    d = DATA_DIR / "waves"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def create_wave(*, name: str, voice_id: str, voice_name: str,
+                base_video_id: int, music_id: int | None,
+                text_before: str, text_after: str,
+                settings: dict | None = None) -> int:
+    """Insert a new wave. Returns the wave id. Raises if `name` exists."""
+    payload = json.dumps(settings or {})
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO waves (name, voice_id, voice_name, base_video_id, music_id, "
+            "text_before, text_after, settings_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, voice_id, voice_name, base_video_id, music_id,
+             text_before, text_after, payload),
+        )
+        wave_id = cur.lastrowid
+    (waves_dir() / str(wave_id)).mkdir(parents=True, exist_ok=True)
+    return wave_id
+
+
+def get_wave(wave_id: int) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM waves WHERE id = ?", (wave_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_wave_by_name(name: str) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM waves WHERE name = ?", (name,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_waves(status: str | None = None) -> list[dict]:
+    """List waves. Optional status filter ('in_progress' / 'completed')."""
+    sql = "SELECT * FROM waves"
+    params: list = []
+    if status:
+        sql += " WHERE status = ?"
+        params.append(status)
+    sql += " ORDER BY updated_at DESC"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_wave_status(wave_id: int, status: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE waves SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, wave_id),
+        )
+
+
+def add_wave_video(*, wave_id: int, variable: str, file_path: str,
+                   from_library: bool = False, status: str | None = None) -> None:
+    """Insert (or replace) a wave_video row. Library reuses default to
+    `approved`; freshly generated videos default to `pending`."""
+    if status is None:
+        status = "approved" if from_library else "pending"
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO wave_videos "
+            "(wave_id, variable, file_path, status, from_library, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            (wave_id, variable, file_path, status, 1 if from_library else 0),
+        )
+
+
+def list_wave_videos(wave_id: int) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM wave_videos WHERE wave_id = ? ORDER BY variable",
+            (wave_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def wave_stats(wave_id: int) -> dict:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM wave_videos WHERE wave_id = ? GROUP BY status",
+            (wave_id,),
+        ).fetchall()
+    out = {"pending": 0, "approved": 0, "rejected": 0, "total": 0}
+    for r in rows:
+        out[r["status"]] = r["n"]
+        out["total"] += r["n"]
+    return out
+
+
+def update_wave_video_status(*, wave_id: int, variable: str,
+                             status: str, notes: str | None = None) -> None:
+    with _connect() as conn:
+        if notes is None:
+            conn.execute(
+                "UPDATE wave_videos SET status = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE wave_id = ? AND variable = ?",
+                (status, wave_id, variable),
+            )
+        else:
+            conn.execute(
+                "UPDATE wave_videos SET status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE wave_id = ? AND variable = ?",
+                (status, notes, wave_id, variable),
+            )
