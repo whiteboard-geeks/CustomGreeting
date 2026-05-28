@@ -721,9 +721,22 @@ else:
                     f"are already QA'ed — only {len(qa_split['needs_generation'])} "
                     "will be generated fresh."
                 )
-                with st.expander(f"Preview an already-QA'ed video", expanded=False):
+                qa_names = [item["variable"] for item in qa_split["already_qaed"]]
+                with st.expander(
+                    f"Show the {len(qa_names)} already-QA'ed names",
+                    expanded=False,
+                ):
+                    st.markdown(
+                        "**Already QA'ed (will be reused):** "
+                        + ", ".join(f"`{n}`" for n in qa_names)
+                    )
+                    if qa_split["needs_generation"]:
+                        st.markdown(
+                            "**Will be freshly generated:** "
+                            + ", ".join(f"`{n}`" for n in qa_split["needs_generation"])
+                        )
                     sample = qa_split["already_qaed"][0]
-                    st.caption(f"Showing **{sample['variable']}** from the library")
+                    st.caption(f"Preview of **{sample['variable']}** from the library")
                     if os.path.isfile(sample["file_path"]):
                         st.video(sample["file_path"])
                     else:
@@ -765,6 +778,17 @@ else:
     variable_audio_volume_factor = 10 ** (variable_audio_volume / 20)
     music_volume_factor = 10 ** (music_volume / 20)
 
+    # Pick the first name that ISN'T already in the QA library so the test
+    # buttons exercise the fresh-generation path; fall back to variables[0]
+    # if every name is already QA'ed.
+    if variables:
+        if qa_split["enabled"] and qa_split["needs_generation"]:
+            test_variable = qa_split["needs_generation"][0]
+        else:
+            test_variable = variables[0]
+    else:
+        test_variable = None
+
     # Add a "Generate Test Audio" button
     if st.button("Generate Test Audio"):
         if not has_base_video() or not has_music() or not variables_input:
@@ -788,13 +812,14 @@ else:
                 greetings_folder = os.path.join(input_folder, "greetings")
                 os.makedirs(greetings_folder, exist_ok=True)
 
-                # Generate greeting for the first variable
-                if variables:
-                    greeting_text = f"{text_before} {variables[0]} {text_after}"
+                # Generate greeting for the chosen test name (skips library
+                # picks so we hear fresh TTS output).
+                if test_variable:
+                    greeting_text = f"{text_before} {test_variable} {text_after}"
                     audio_filename = text_to_speech_file(
                         client,
                         greeting_text,
-                        variables[0],  # Use the first variable as the filename
+                        test_variable,
                         greetings_folder,
                         voice_option[1],
                         pronunciation_dict,
@@ -803,7 +828,7 @@ else:
 
                     # Create the full audio track
                     video = VideoFileClip(base_video_path)
-                    audio_path = os.path.join(greetings_folder, f"{variables[0]}.mp3")
+                    audio_path = os.path.join(greetings_folder, f"{test_variable}.mp3")
                     final_audio = create_audio_clip(
                         audio_path,
                         video,
@@ -814,11 +839,11 @@ else:
                         music_volume_factor,
                     )
                     test_audio_path = os.path.join(
-                        output_folder, f"test_{variables[0]}.mp3"
+                        output_folder, f"test_{test_variable}.mp3"
                     )
                     final_audio.write_audiofile(test_audio_path, fps=44100)
 
-                    st.success("Test audio generated successfully!")
+                    st.success(f"Test audio generated for **{test_variable}**.")
                     st.audio(test_audio_path)
 
     # Add a "Generate Test Video" button
@@ -844,10 +869,11 @@ else:
                 greetings_folder = os.path.join(input_folder, "greetings")
                 os.makedirs(greetings_folder, exist_ok=True)
 
-                # Use the existing audio file to create a test video
-                if variables:
+                # Use the audio for the chosen test name (from Generate Test
+                # Audio) to assemble the test video.
+                if test_variable:
                     video = VideoFileClip(base_video_path)
-                    audio_path = os.path.join(greetings_folder, f"{variables[0]}.mp3")
+                    audio_path = os.path.join(greetings_folder, f"{test_variable}.mp3")
                     final_audio = create_audio_clip(
                         audio_path,
                         video,
@@ -858,13 +884,13 @@ else:
                         music_volume_factor,
                     )
                     final_video = video.set_audio(final_audio)
-                    test_output_filename = f"test_{variables[0]}.mp4"
+                    test_output_filename = f"test_{test_variable}.mp4"
                     test_output_path = os.path.join(output_folder, test_output_filename)
                     final_video.write_videofile(
                         test_output_path, codec="libx264", audio_codec="aac"
                     )
 
-                    st.success("Test video generated successfully!")
+                    st.success(f"Test video generated for **{test_variable}**.")
                     st.video(test_output_path)
 
     # Move the "Generate Videos" button here
