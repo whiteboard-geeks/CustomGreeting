@@ -27,8 +27,12 @@ CREATE TABLE IF NOT EXISTS base_videos (
     resolution TEXT NOT NULL,
     file_hash TEXT NOT NULL,
     file_path TEXT NOT NULL,
+    transcript TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Add transcript column to base_videos if upgrading from earlier schema
+-- (SQLite will error harmlessly if column already exists; handled in code)
 
 CREATE TABLE IF NOT EXISTS music_tracks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,6 +91,10 @@ def init_db() -> None:
     (DATA_DIR / "library").mkdir(exist_ok=True)
     with _connect() as conn:
         conn.executescript(SCHEMA)
+        # Idempotent column adds for forward-compat with already-deployed DBs
+        existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(base_videos)").fetchall()}
+        if "transcript" not in existing_cols:
+            conn.execute("ALTER TABLE base_videos ADD COLUMN transcript TEXT")
 
 
 # Base videos ----------------------------------------------------------------
@@ -94,21 +102,51 @@ def init_db() -> None:
 def list_base_videos() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, duration, resolution, file_path FROM base_videos ORDER BY name"
+            "SELECT id, name, duration, resolution, file_hash, file_path, transcript "
+            "FROM base_videos ORDER BY name"
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def find_matching_base_video(fingerprint: dict) -> dict | None:
-    """Return the existing base_video that matches this fingerprint, or None."""
-    for row in list_base_videos():
+def find_matching_base_video(fingerprint: dict, transcript: str | None = None) -> dict | None:
+    """Return the existing base_video that matches this fingerprint, or None.
+
+    Match priority:
+      1. Exact file_hash match (re-upload of same file)
+      2. Transcript similarity >= 0.9 AND resolution match (re-encoded same content)
+      3. Duration within tolerance AND resolution match (fallback)
+    """
+    candidates = list_base_videos()
+
+    for row in candidates:
+        if row["file_hash"] == fingerprint["file_hash"]:
+            return row
+
+    if transcript:
+        best = None
+        best_sim = 0.0
+        for row in candidates:
+            if not row.get("transcript"):
+                continue
+            if row["resolution"] != fingerprint["resolution"]:
+                continue
+            sim = fp.transcript_similarity(transcript, row["transcript"])
+            if sim > best_sim:
+                best_sim = sim
+                best = row
+        if best and best_sim >= 0.9:
+            best["_match_similarity"] = best_sim
+            return best
+
+    for row in candidates:
         existing = {"duration": row["duration"], "resolution": row["resolution"]}
         if fp.videos_match(fingerprint, existing):
             return row
     return None
 
 
-def register_base_video(name: str, source_path: str, fingerprint: dict) -> dict:
+def register_base_video(name: str, source_path: str, fingerprint: dict,
+                        transcript: str | None = None) -> dict:
     """Copy the file into the library and create a DB entry. Returns the row."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     base_videos_dir = DATA_DIR / "base_videos"
@@ -122,10 +160,10 @@ def register_base_video(name: str, source_path: str, fingerprint: dict) -> dict:
 
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO base_videos (name, duration, resolution, file_hash, file_path) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO base_videos (name, duration, resolution, file_hash, file_path, transcript) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (name, fingerprint["duration"], fingerprint["resolution"],
-             fingerprint["file_hash"], str(dest)),
+             fingerprint["file_hash"], str(dest), transcript),
         )
         new_id = cur.lastrowid
     return {

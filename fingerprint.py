@@ -10,10 +10,35 @@ duration (seconds, 2dp) + resolution. Music = duration only.
 
 import hashlib
 import json
+import re
 import subprocess
+from difflib import SequenceMatcher
 from pathlib import Path
 
 DURATION_TOLERANCE_S = 1.0  # how close two videos must be to count as the same
+
+
+def normalize_transcript(text: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace. Used so Whisper
+    transcription quirks (commas, hyphens, casing) don't break similarity."""
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def transcript_similarity(a: str, b: str) -> float:
+    """Return 0..1 similarity between two transcripts after normalization.
+
+    For matching an uploaded base video, the user's upload won't contain a
+    TTS greeting — only the baked-in voiceover. For matching a rendered QA'ed
+    video (which starts with "Hi [Name]!"), strip the first ~80 chars before
+    calling this.
+    """
+    na, nb = normalize_transcript(a), normalize_transcript(b)
+    if not na or not nb:
+        return 0.0
+    return SequenceMatcher(None, na, nb).ratio()
 
 
 def _ffprobe(path: str) -> dict:

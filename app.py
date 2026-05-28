@@ -15,8 +15,76 @@ from elevenlabs import VoiceSettings, PronunciationDictionaryVersionLocator
 from elevenlabs.client import ElevenLabs
 
 import db
+import fingerprint as fp_mod
 
 db.init_db()
+
+
+def _detect_uploaded_base_video(uploaded_file) -> None:
+    """Show a banner if an uploaded base video matches one already in the library."""
+    if uploaded_file is None:
+        return
+    cache_key = (uploaded_file.name, uploaded_file.size)
+    if st.session_state.get("_bv_last_detected") == cache_key:
+        return
+    st.session_state["_bv_last_detected"] = cache_key
+
+    tmp_path = os.path.join("temp_data", f"_detect_bv_{uuid.uuid4()}.mp4")
+    os.makedirs("temp_data", exist_ok=True)
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(uploaded_file.getvalue())
+        fingerprint = fp_mod.fingerprint_video(tmp_path)
+        match = db.find_matching_base_video(fingerprint)
+        if match:
+            st.info(
+                f"📚 This base video matches **{match['name']}** "
+                f"({match['duration']}s, {match['resolution']}) — already in the library."
+            )
+        else:
+            st.info(
+                f"🆕 Looks like a new base video "
+                f"({fingerprint['duration']}s, {fingerprint['resolution']}) — "
+                "not yet in the library."
+            )
+    except Exception as e:
+        st.warning(f"Could not fingerprint base video: {e}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def _detect_uploaded_music(uploaded_file) -> None:
+    """Show a banner if an uploaded music track matches one already in the library."""
+    if uploaded_file is None:
+        return
+    cache_key = (uploaded_file.name, uploaded_file.size)
+    if st.session_state.get("_music_last_detected") == cache_key:
+        return
+    st.session_state["_music_last_detected"] = cache_key
+
+    tmp_path = os.path.join("temp_data", f"_detect_music_{uuid.uuid4()}.wav")
+    os.makedirs("temp_data", exist_ok=True)
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(uploaded_file.getvalue())
+        fingerprint = fp_mod.fingerprint_music(tmp_path)
+        match = db.find_matching_music(fingerprint)
+        if match:
+            st.info(
+                f"🎵 This music matches **{match['name']}** "
+                f"({match['duration']}s) — already in the library."
+            )
+        else:
+            st.info(
+                f"🆕 Looks like a new music track "
+                f"({fingerprint['duration']}s) — not yet in the library."
+            )
+    except Exception as e:
+        st.warning(f"Could not fingerprint music: {e}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 # Password protection
@@ -219,7 +287,9 @@ else:
 
     # Continue with other file uploaders
     base_video = st.file_uploader("Upload Base Video", type=["mp4"])
+    _detect_uploaded_base_video(base_video)
     music = st.file_uploader("Upload Music", type=["wav"])
+    _detect_uploaded_music(music)
 
     # New input fields for text customization
     text_before = st.text_input("Text Before Customization", "Hi")
