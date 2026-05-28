@@ -20,6 +20,15 @@ import fingerprint as fp_mod
 db.init_db()
 
 
+def _voice_usage_caption(last_used: str | None, voice_name: str) -> str:
+    """Friendly caption for a library item: when it was last used with this voice."""
+    if not last_used:
+        return f"Not yet used with {voice_name}"
+    # SQLite CURRENT_TIMESTAMP stores 'YYYY-MM-DD HH:MM:SS'
+    date_part = last_used.split(" ", 1)[0]
+    return f"Last used with {voice_name} on {date_part}"
+
+
 def _select_or_upload_base_video(voice_id: str, voice_name: str):
     """Render the Library / Upload chooser for the base video. Stores the choice
     in session state and returns a (source_type, identifier) tuple that the
@@ -52,7 +61,7 @@ def _select_or_upload_base_video(voice_id: str, voice_name: str):
             key=f"bv_pick_{voice_id}",
         )
         chosen = library[idx]
-        st.caption(f"Using `{chosen['file_path']}`")
+        st.caption(_voice_usage_caption(chosen.get("last_used_with_voice"), voice_name))
         st.session_state["_bv_source"] = {"type": "library", "path": chosen["file_path"],
                                            "name": chosen["name"]}
         return
@@ -92,7 +101,7 @@ def _select_or_upload_music(voice_id: str, voice_name: str):
             key=f"music_pick_{voice_id}",
         )
         chosen = library[idx]
-        st.caption(f"Using `{chosen['file_path']}`")
+        st.caption(_voice_usage_caption(chosen.get("last_used_with_voice"), voice_name))
         st.session_state["_music_source"] = {"type": "library", "path": chosen["file_path"],
                                               "name": chosen["name"]}
         return

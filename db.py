@@ -143,6 +143,8 @@ def list_base_videos_for_voice(voice_id: str, voice_name: str) -> list[dict]:
         0 if first_name and v["name"].lower().startswith(first_name) else 1,
         v["name"].lower(),
     ))
+    for v in used + unused:
+        v["last_used_with_voice"] = last_used.get(v["id"])
     return used + unused
 
 
@@ -243,6 +245,8 @@ def list_music_for_voice(voice_id: str, voice_name: str) -> list[dict]:
         0 if first_name and m["name"].lower().startswith(first_name) else 1,
         m["name"].lower(),
     ))
+    for m in used + unused:
+        m["last_used_with_voice"] = last_used.get(m["id"])
     return used + unused
 
 
