@@ -20,6 +20,25 @@ import fingerprint as fp_mod
 db.init_db()
 
 
+def _compute_qa_split(variables: list[str], voice_id: str, use_library: bool) -> dict:
+    """Split variables into already-QA'ed (with library file_path) and needs_generation,
+    given the currently selected base video + music. Returns {'enabled': bool,
+    'already_qaed': [...], 'needs_generation': [...]}.
+
+    'enabled' is False when the toggle is off, when no base video is selected,
+    or when the selected base video isn't recognised by the library.
+    """
+    bv = st.session_state.get("_bv_source") or {}
+    music = st.session_state.get("_music_source") or {}
+    bv_id = bv.get("id")
+    music_id = music.get("id")
+    if not use_library or not variables or not bv_id:
+        return {"enabled": False, "already_qaed": [], "needs_generation": list(variables)}
+    result = db.lookup_qaed(voice_id, bv_id, music_id, variables)
+    result["enabled"] = True
+    return result
+
+
 def _voice_usage_caption(last_used: str | None, voice_name: str) -> str:
     """Friendly caption for a library item: when it was last used with this voice."""
     if not last_used:
@@ -63,14 +82,14 @@ def _select_or_upload_base_video(voice_id: str, voice_name: str):
         chosen = library[idx]
         st.caption(_voice_usage_caption(chosen.get("last_used_with_voice"), voice_name))
         st.session_state["_bv_source"] = {"type": "library", "path": chosen["file_path"],
-                                           "name": chosen["name"]}
+                                           "name": chosen["name"], "id": chosen["id"]}
         return
-    # Upload new
+    # Upload new — try to match against the library so the QA registry stays useful.
     uploaded = st.file_uploader("Upload Base Video", type=["mp4"], key="bv_upload")
-    _detect_uploaded_base_video(uploaded)
+    matched_id = _detect_uploaded_base_video(uploaded)
     if uploaded is not None:
         st.session_state["_bv_source"] = {"type": "upload", "uploaded": uploaded,
-                                           "name": uploaded.name}
+                                           "name": uploaded.name, "id": matched_id}
     else:
         st.session_state.pop("_bv_source", None)
 
@@ -103,13 +122,13 @@ def _select_or_upload_music(voice_id: str, voice_name: str):
         chosen = library[idx]
         st.caption(_voice_usage_caption(chosen.get("last_used_with_voice"), voice_name))
         st.session_state["_music_source"] = {"type": "library", "path": chosen["file_path"],
-                                              "name": chosen["name"]}
+                                              "name": chosen["name"], "id": chosen["id"]}
         return
     uploaded = st.file_uploader("Upload Music", type=["wav"], key="music_upload")
-    _detect_uploaded_music(uploaded)
+    matched_id = _detect_uploaded_music(uploaded)
     if uploaded is not None:
         st.session_state["_music_source"] = {"type": "upload", "uploaded": uploaded,
-                                              "name": uploaded.name}
+                                              "name": uploaded.name, "id": matched_id}
     else:
         st.session_state.pop("_music_source", None)
 
@@ -141,23 +160,27 @@ def has_music() -> bool:
     return st.session_state.get("_music_source") is not None
 
 
-def _detect_uploaded_base_video(uploaded_file) -> None:
-    """Show a banner if an uploaded base video matches one already in the library."""
+def _detect_uploaded_base_video(uploaded_file) -> int | None:
+    """Show a banner if an uploaded base video matches one already in the library.
+    Returns the matched base_videos.id if any, else None — so the caller can
+    use that id for QA registry lookups."""
     if uploaded_file is None:
-        return
+        return None
     cache_key = (uploaded_file.name, uploaded_file.size)
-    if st.session_state.get("_bv_last_detected") == cache_key:
-        return
-    st.session_state["_bv_last_detected"] = cache_key
+    cached = st.session_state.get("_bv_last_detected")
+    if cached and cached[0] == cache_key:
+        return cached[1]
 
     tmp_path = os.path.join("temp_data", f"_detect_bv_{uuid.uuid4()}.mp4")
     os.makedirs("temp_data", exist_ok=True)
+    matched_id: int | None = None
     try:
         with open(tmp_path, "wb") as f:
             f.write(uploaded_file.getvalue())
         fingerprint = fp_mod.fingerprint_video(tmp_path)
         match = db.find_matching_base_video(fingerprint)
         if match:
+            matched_id = match["id"]
             st.info(
                 f"📚 This base video matches **{match['name']}** "
                 f"({match['duration']}s, {match['resolution']}) — already in the library."
@@ -174,24 +197,30 @@ def _detect_uploaded_base_video(uploaded_file) -> None:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
+    st.session_state["_bv_last_detected"] = (cache_key, matched_id)
+    return matched_id
 
-def _detect_uploaded_music(uploaded_file) -> None:
-    """Show a banner if an uploaded music track matches one already in the library."""
+
+def _detect_uploaded_music(uploaded_file) -> int | None:
+    """Show a banner if an uploaded music track matches one already in the library.
+    Returns the matched music_tracks.id if any, else None."""
     if uploaded_file is None:
-        return
+        return None
     cache_key = (uploaded_file.name, uploaded_file.size)
-    if st.session_state.get("_music_last_detected") == cache_key:
-        return
-    st.session_state["_music_last_detected"] = cache_key
+    cached = st.session_state.get("_music_last_detected")
+    if cached and cached[0] == cache_key:
+        return cached[1]
 
     tmp_path = os.path.join("temp_data", f"_detect_music_{uuid.uuid4()}.wav")
     os.makedirs("temp_data", exist_ok=True)
+    matched_id: int | None = None
     try:
         with open(tmp_path, "wb") as f:
             f.write(uploaded_file.getvalue())
         fingerprint = fp_mod.fingerprint_music(tmp_path)
         match = db.find_matching_music(fingerprint)
         if match:
+            matched_id = match["id"]
             st.info(
                 f"🎵 This music matches **{match['name']}** "
                 f"({match['duration']}s) — already in the library."
@@ -206,6 +235,9 @@ def _detect_uploaded_music(uploaded_file) -> None:
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+    st.session_state["_music_last_detected"] = (cache_key, matched_id)
+    return matched_id
 
 
 # Password protection
@@ -350,6 +382,22 @@ if "session_id" not in st.session_state:
     st.session_state["session_id"] = uuid.uuid4()
     cleanup_old_sessions()
 
+# Safety toggle: when off, the app behaves like the original (no QA registry).
+with st.sidebar:
+    st.subheader("QA library")
+    use_qa_library = st.checkbox(
+        "Reuse previously QA'ed videos",
+        value=True,
+        help="When on, names that already exist in the QA library are copied "
+             "from there instead of being regenerated. Turn off to force fresh "
+             "generation for every name.",
+    )
+    library_bv_count = len(db.list_base_videos())
+    library_music_count = len(db.list_music_tracks())
+    st.caption(
+        f"Library: {library_bv_count} base videos, {library_music_count} music tracks"
+    )
+
 
 # Add a select box for voice selection
 voice_option = st.selectbox(
@@ -420,6 +468,21 @@ else:
     if variables:
         example_message = f"{text_before} {variables[0]} {text_after}"
         st.write(f"Example message: {example_message}")
+
+    # Live QA split preview — recalculates as the user types/changes inputs.
+    qa_split = _compute_qa_split(variables, voice_option[1], use_qa_library)
+    if variables:
+        if qa_split["enabled"] and qa_split["already_qaed"]:
+            st.success(
+                f"✅ {len(qa_split['already_qaed'])} of {len(variables)} names "
+                f"are already QA'ed — only {len(qa_split['needs_generation'])} "
+                "will be generated fresh."
+            )
+        elif qa_split["enabled"]:
+            st.info(
+                f"ℹ️ None of these {len(variables)} names are in the QA library — "
+                "all will be generated fresh."
+            )
 
     clip_start = st.number_input(
         "Amount to clip from the start of the video", min_value=0.0, value=1.0
@@ -555,6 +618,7 @@ else:
         if not has_base_video() or not has_music() or not variables_input:
             st.error("Please provide all inputs.")
         else:
+            split = _compute_qa_split(variables, voice_option[1], use_qa_library)
             with st.spinner("Generating videos..."):
                 input_folder, output_folder = get_session_paths()
                 os.makedirs(input_folder, exist_ok=True)
@@ -569,68 +633,81 @@ else:
                 with open(music_path, "wb") as f:
                     f.write(read_music_bytes())
 
-                # Generate greetings
+                # Generate TTS only for names that aren't in the QA library.
+                to_generate = split["needs_generation"]
+                already_qaed = split["already_qaed"]
+
                 greetings_folder = os.path.join(input_folder, "greetings")
                 os.makedirs(greetings_folder, exist_ok=True)
-                for variable in variables:
+                for variable in to_generate:
                     greeting_text = f"{text_before} {variable} {text_after}"
                     text_to_speech_file(
                         client,
                         greeting_text,
-                        variable,  # Use variable as the filename
+                        variable,
                         greetings_folder,
                         voice_option[1],
                         pronunciation_dict,
                     )
 
-                # Initialize progress bar
-                total_videos = len(variables)
-
-                # Process each audio file and create videos
-                video = VideoFileClip(base_video_path)
                 zip_filename = os.path.join(output_folder, "rendered_videos.zip")
-                progress_counter = 0
 
+                # Two-folder layout: 'already_qaed/' (copied from library) and
+                # 'needs_qa/' (newly generated, awaiting QA).
                 with zipfile.ZipFile(zip_filename, "w") as zipf:
-                    for idx, audio_filename in enumerate(os.listdir(greetings_folder)):
-                        if (
-                            audio_filename.endswith(".mp3")
-                            and not audio_filename == ".mp3"
-                        ):
-                            audio_path = os.path.join(greetings_folder, audio_filename)
-                            final_audio = create_audio_clip(
-                                audio_path,
-                                video,
-                                clip_start,
-                                variable_audio_volume_factor,
-                                voiceover_volume_factor,
-                                music_path,
-                                music_volume_factor,
-                            )
-                            final_video = video.set_audio(final_audio)
-                            output_filename = (
-                                f"{os.path.splitext(audio_filename)[0]}.mp4"
-                            )
-                            output_path = os.path.join(output_folder, output_filename)
-                            final_video.write_videofile(
-                                output_path, codec="libx264", audio_codec="aac"
-                            )
-                            progress_counter += 1
-                            zipf.write(output_path, arcname=output_filename)
+                    if to_generate:
+                        video = VideoFileClip(base_video_path)
+                        try:
+                            for audio_filename in os.listdir(greetings_folder):
+                                if not audio_filename.endswith(".mp3") or audio_filename == ".mp3":
+                                    continue
+                                audio_path = os.path.join(greetings_folder, audio_filename)
+                                final_audio = create_audio_clip(
+                                    audio_path,
+                                    video,
+                                    clip_start,
+                                    variable_audio_volume_factor,
+                                    voiceover_volume_factor,
+                                    music_path,
+                                    music_volume_factor,
+                                )
+                                final_video = video.set_audio(final_audio)
+                                output_filename = f"{os.path.splitext(audio_filename)[0]}.mp4"
+                                output_path = os.path.join(output_folder, output_filename)
+                                final_video.write_videofile(
+                                    output_path, codec="libx264", audio_codec="aac"
+                                )
+                                arcname = f"needs_qa/{output_filename}" if already_qaed else output_filename
+                                zipf.write(output_path, arcname=arcname)
+                        finally:
+                            video.close()
 
-                # Clean up the greetings folder
+                    for item in already_qaed:
+                        src = item["file_path"]
+                        arcname = f"already_qaed/{item['variable']}.mp4"
+                        if os.path.isfile(src):
+                            zipf.write(src, arcname=arcname)
+
+                # Cleanup
                 for audio_filename in os.listdir(greetings_folder):
                     file_path = os.path.join(greetings_folder, audio_filename)
                     if os.path.isfile(file_path):
                         os.remove(file_path)
-
-                # Remove the base video and music files
                 if os.path.isfile(base_video_path):
                     os.remove(base_video_path)
                 if os.path.isfile(music_path):
                     os.remove(music_path)
 
-                st.success("Processing complete!")
+                # Surface the split result so the user knows what happened.
+                if already_qaed:
+                    st.success(
+                        f"Generated {len(to_generate)} new videos, "
+                        f"reused {len(already_qaed)} from the QA library. "
+                        "Zip contains `needs_qa/` and `already_qaed/` folders."
+                    )
+                else:
+                    st.success(f"Generated {len(to_generate)} videos.")
+
                 st.download_button(
                     "Download Rendered Videos",
                     data=open(zip_filename, "rb"),
