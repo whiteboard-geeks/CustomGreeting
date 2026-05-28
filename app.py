@@ -20,6 +20,44 @@ import fingerprint as fp_mod
 db.init_db()
 
 
+def _generation_signature(*, voice_id: str, variables: list[str],
+                          text_before: str, text_after: str,
+                          clip_start, voiceover_volume, variable_audio_volume,
+                          music_volume, force_fresh: bool) -> str:
+    """Stable hash of every input that affects the generated zip. Used to keep
+    the previous download button alive as long as none of the inputs have
+    changed — clicking Generate Videos saves the new signature, and a later
+    UI change (different name, voice, volume, …) invalidates it."""
+    import hashlib
+    import json
+    bv = st.session_state.get("_bv_source") or {}
+    music = st.session_state.get("_music_source") or {}
+    if bv.get("type") == "upload":
+        u = bv.get("uploaded")
+        bv_sig = ("upload", bv.get("name"), getattr(u, "size", 0))
+    else:
+        bv_sig = ("lib", bv.get("path"))
+    if music.get("type") == "upload":
+        u = music.get("uploaded")
+        m_sig = ("upload", music.get("name"), getattr(u, "size", 0))
+    else:
+        m_sig = ("lib", music.get("path"))
+    payload = {
+        "voice_id": voice_id,
+        "variables": sorted(variables),
+        "text_before": text_before,
+        "text_after": text_after,
+        "bv": bv_sig,
+        "music": m_sig,
+        "clip_start": float(clip_start),
+        "voiceover_volume": float(voiceover_volume),
+        "variable_audio_volume": float(variable_audio_volume),
+        "music_volume": float(music_volume),
+        "force_fresh": bool(force_fresh),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
 def _compute_qa_split(variables: list[str], voice_id: str, use_library: bool) -> dict:
     """Split variables into already-QA'ed (with library file_path) and needs_generation,
     given the currently selected base video + music. Returns {'enabled': bool,
@@ -721,16 +759,50 @@ else:
 
                 # Surface the split result so the user knows what happened.
                 if already_qaed:
-                    st.success(
+                    summary = (
                         f"Generated {len(to_generate)} new videos, "
                         f"reused {len(already_qaed)} from the QA library. "
                         "Zip contains `needs_qa/` and `already_qaed/` folders."
                     )
                 else:
-                    st.success(f"Generated {len(to_generate)} videos.")
+                    summary = f"Generated {len(to_generate)} videos."
 
+                # Stash the zip path + the inputs signature so the download
+                # button survives unrelated reruns. A later input change
+                # (different name, base video, volume, etc.) will produce a
+                # different signature and the button will disappear.
+                st.session_state["_last_zip_path"] = zip_filename
+                st.session_state["_last_zip_summary"] = summary
+                st.session_state["_last_zip_signature"] = _generation_signature(
+                    voice_id=voice_option[1], variables=variables,
+                    text_before=text_before, text_after=text_after,
+                    clip_start=clip_start, voiceover_volume=voiceover_volume,
+                    variable_audio_volume=variable_audio_volume,
+                    music_volume=music_volume, force_fresh=force_fresh,
+                )
+
+    # Persistent download — survives until any input that would change the
+    # zip's contents changes (then the signature stops matching and the
+    # button disappears, prompting a fresh Generate Videos click).
+    if variables and st.session_state.get("_last_zip_path"):
+        try:
+            current_sig = _generation_signature(
+                voice_id=voice_option[1], variables=variables,
+                text_before=text_before, text_after=text_after,
+                clip_start=clip_start, voiceover_volume=voiceover_volume,
+                variable_audio_volume=variable_audio_volume,
+                music_volume=music_volume, force_fresh=force_fresh,
+            )
+        except Exception:
+            current_sig = None
+        last_sig = st.session_state.get("_last_zip_signature")
+        zip_path = st.session_state.get("_last_zip_path")
+        if last_sig == current_sig and zip_path and os.path.isfile(zip_path):
+            st.success(st.session_state.get("_last_zip_summary", "Ready to download."))
+            with open(zip_path, "rb") as f:
                 st.download_button(
                     "Download Rendered Videos",
-                    data=open(zip_filename, "rb"),
+                    data=f.read(),
                     file_name="rendered_videos.zip",
+                    key="persistent_dl",
                 )
