@@ -4,3 +4,6 @@
 .vscode
 /.streamlit/secrets.toml
 /temp_data
+/data
+__pycache__/
+*.pyc

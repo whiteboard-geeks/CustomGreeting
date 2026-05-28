@@ -14,6 +14,10 @@ from moviepy.editor import (
 from elevenlabs import VoiceSettings, PronunciationDictionaryVersionLocator
 from elevenlabs.client import ElevenLabs
 
+import db
+
+db.init_db()
+
 
 # Password protection
 def check_password():
