@@ -20,6 +20,136 @@ import fingerprint as fp_mod
 db.init_db()
 
 
+def _handle_qa_upload(uploaded_zip) -> None:
+    """Read a zip of QA'ed videos. If manifest.json is present, use its
+    voice/base_video/music context. Otherwise, fall back to whichever voice +
+    base video + music are currently selected. Register each .mp4 inside the
+    zip (excluding `already_qaed/` entries) as a QA'ed library video."""
+    import io
+    import json
+    import tempfile
+    import zipfile as zf
+
+    cache_key = (uploaded_zip.name, uploaded_zip.size)
+    if st.session_state.get("_qa_upload_handled") == cache_key:
+        return
+
+    try:
+        zbytes = uploaded_zip.getvalue()
+        archive = zf.ZipFile(io.BytesIO(zbytes))
+    except Exception as exc:
+        st.error(f"Couldn't read zip: {exc}")
+        return
+
+    # Try the manifest first.
+    manifest: dict | None = None
+    try:
+        with archive.open("manifest.json") as f:
+            manifest = json.load(f)
+    except KeyError:
+        manifest = None
+    except Exception as exc:
+        st.warning(f"manifest.json present but unreadable: {exc}")
+
+    if manifest:
+        voice_id = manifest.get("voice_id")
+        voice_name = manifest.get("voice_name")
+        base_video_id = manifest.get("base_video_id")
+        music_id = manifest.get("music_id")
+        text_before = manifest.get("text_before", "Hi")
+        text_after = manifest.get("text_after", "!")
+        st.info(
+            f"Found manifest: **{voice_name}** + "
+            f"**{manifest.get('base_video_name', '?')}** + "
+            f"**{manifest.get('music_name', '?')}**"
+        )
+    else:
+        st.warning(
+            "No manifest.json in the zip — using the voice / base video / "
+            "music currently selected above."
+        )
+        bv_src = st.session_state.get("_bv_source") or {}
+        music_src = st.session_state.get("_music_source") or {}
+        voice_id = st.session_state.get("_active_voice_id")
+        voice_name = st.session_state.get("_active_voice_name")
+        base_video_id = bv_src.get("id")
+        music_id = music_src.get("id")
+        text_before = "Hi"
+        text_after = "!"
+
+    if not voice_id or not base_video_id:
+        st.error(
+            "Can't import without a voice and a known base video. Select a "
+            "voice and a library base video above, then re-upload."
+        )
+        return
+
+    # Walk the entries. Filenames inside `already_qaed/` are skipped — they
+    # came from the library and are already registered.
+    candidates = []
+    for info in archive.infolist():
+        if info.is_dir():
+            continue
+        path = info.filename
+        if not path.lower().endswith(".mp4"):
+            continue
+        if path.startswith("already_qaed/"):
+            continue
+        variable = os.path.splitext(os.path.basename(path))[0]
+        if not variable:
+            continue
+        candidates.append((path, variable))
+
+    if not candidates:
+        st.warning("No new .mp4 files found in the zip.")
+        return
+
+    added: list[str] = []
+    replaced: list[str] = []
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for path, variable in candidates:
+            tmp_video = os.path.join(tmpdir, os.path.basename(path))
+            with archive.open(path) as src, open(tmp_video, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            existing = db.lookup_qaed(voice_id, base_video_id, music_id, [variable])
+            try:
+                db.register_qaed_video(
+                    voice_id=voice_id,
+                    voice_name=voice_name or "Unknown",
+                    base_video_id=base_video_id,
+                    music_id=music_id,
+                    variable=variable,
+                    greeting_text=f"{text_before} {variable} {text_after}",
+                    source_path=tmp_video,
+                    confirmed=True,
+                )
+                if existing["already_qaed"]:
+                    replaced.append(variable)
+                else:
+                    added.append(variable)
+            except Exception as exc:
+                st.warning(f"Failed to register `{variable}`: {exc}")
+
+    if added or replaced:
+        msg = []
+        if added:
+            msg.append(f"Added **{len(added)}** new videos to the library.")
+        if replaced:
+            msg.append(f"Replaced **{len(replaced)}** existing entries.")
+        st.success(" ".join(msg))
+        if added:
+            st.caption("Added: " + ", ".join(added[:20])
+                       + (f" (+{len(added)-20} more)" if len(added) > 20 else ""))
+        if replaced:
+            st.caption("Replaced: " + ", ".join(replaced[:20])
+                       + (f" (+{len(replaced)-20} more)" if len(replaced) > 20 else ""))
+    else:
+        st.info("Nothing to import.")
+
+    st.session_state["_qa_upload_handled"] = cache_key
+
+
 def _generation_signature(*, voice_id: str, variables: list[str],
                           text_before: str, text_after: str,
                           clip_start, voiceover_volume, variable_audio_volume,
@@ -488,6 +618,11 @@ else:
                 st.error(f"Error uploading pronunciation dictionary: {str(e)}")
                 pronunciation_dict = None
 
+    # Remember which voice is active so the QA-upload flow can use it when no
+    # manifest is present.
+    st.session_state["_active_voice_id"] = voice_option[1]
+    st.session_state["_active_voice_name"] = voice_option[0]
+
     # Base video + music: pick from library, or upload a new one.
     _select_or_upload_base_video(voice_option[1], voice_option[0])
     _select_or_upload_music(voice_option[1], voice_option[0])
@@ -711,9 +846,29 @@ else:
 
                 zip_filename = os.path.join(output_folder, "rendered_videos.zip")
 
+                # manifest.json carries voice/base_video/music context so the
+                # uploader can re-register QA'ed videos to the same library
+                # entry without asking the user to pick again.
+                bv_src = st.session_state.get("_bv_source") or {}
+                music_src = st.session_state.get("_music_source") or {}
+                manifest = {
+                    "voice_id": voice_option[1],
+                    "voice_name": voice_option[0],
+                    "base_video_id": bv_src.get("id"),
+                    "base_video_name": bv_src.get("name"),
+                    "music_id": music_src.get("id"),
+                    "music_name": music_src.get("name"),
+                    "text_before": text_before,
+                    "text_after": text_after,
+                    "needs_qa_variables": list(to_generate),
+                    "already_qaed_variables": [it["variable"] for it in already_qaed],
+                }
+
                 # Two-folder layout: 'already_qaed/' (copied from library) and
                 # 'needs_qa/' (newly generated, awaiting QA).
                 with zipfile.ZipFile(zip_filename, "w") as zipf:
+                    import json as _json_for_manifest
+                    zipf.writestr("manifest.json", _json_for_manifest.dumps(manifest, indent=2))
                     if to_generate:
                         video = VideoFileClip(base_video_path)
                         try:
@@ -806,3 +961,24 @@ else:
                     file_name="rendered_videos.zip",
                     key="persistent_dl",
                 )
+
+    # -----------------------------------------------------------------
+    # Phase 4: import QA'ed videos back into the library.
+    # -----------------------------------------------------------------
+    st.divider()
+    st.subheader("Upload QA'ed videos to the library")
+    st.caption(
+        "When you (or whoever did the QA) approve a batch, drop the zip here "
+        "to add the approved videos to the library. Future generations for the "
+        "same voice / base video / music will reuse them automatically."
+    )
+    uploaded_qa_zip = st.file_uploader(
+        "Upload a zip of QA'ed videos",
+        type=["zip"],
+        key="qa_upload",
+        help="Should be the zip you downloaded earlier (contains manifest.json). "
+             "Videos in `needs_qa/` and any loose .mp4 at the top level get "
+             "imported. Files in `already_qaed/` are skipped (already in the library).",
+    )
+    if uploaded_qa_zip is not None:
+        _handle_qa_upload(uploaded_qa_zip)
