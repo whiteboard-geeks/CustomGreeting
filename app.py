@@ -463,8 +463,11 @@ def text_to_speech_file(
         "voice_id": voice_id,
         "output_format": "mp3_44100_192",
         "text": text,
+        # Newest model (May 2026). Most expressive, 70+ languages.
+        # Alias-style pronunciation dictionary entries are honored; phoneme
+        # (IPA/CMU) entries are not — but our dictionaries are alias-only.
         "language_code": "en",
-        "model_id": "eleven_multilingual_v2",
+        "model_id": "eleven_v3",
         "voice_settings": VoiceSettings(
             stability=0.6,
             similarity_boost=0.9,
