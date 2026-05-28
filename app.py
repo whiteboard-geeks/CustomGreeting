@@ -451,7 +451,11 @@ def create_silence(duration=1):
     return AudioClip(lambda t: 0, duration=duration)
 
 
-DEFAULT_MODEL_ID = "eleven_v3"
+# Default TTS model. Barbara/April were cloned in the multilingual_v2 era, so
+# we stay in that voice-embedding family — turbo_v2_5 is compatible AND it
+# hard-locks language_code="en" (multilingual_v2 treats it as advisory only,
+# which is what caused 'Lance' to drift into another language).
+DEFAULT_MODEL_ID = "eleven_turbo_v2_5"
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -666,7 +670,7 @@ else:
 
         model_ids = [m["model_id"] for m in tts_models]
         if DEFAULT_MODEL_ID not in model_ids:
-            tts_models = [{"model_id": DEFAULT_MODEL_ID, "name": "Eleven v3"}] + tts_models
+            tts_models = [{"model_id": DEFAULT_MODEL_ID, "name": "Eleven Turbo v2.5"}] + tts_models
             model_ids = [m["model_id"] for m in tts_models]
 
         default_idx = model_ids.index(DEFAULT_MODEL_ID) if DEFAULT_MODEL_ID in model_ids else 0
@@ -677,10 +681,20 @@ else:
             format_func=lambda mid: labels.get(mid, mid),
             index=default_idx,
             key="tts_model_id",
-            help="Default is eleven_v3 (newest). Switch if a voice sounds "
-                 "off or if a name keeps flipping to a non-English accent.",
+            help="Default is eleven_turbo_v2_5 — compatible with the existing "
+                 "Barbara / April voice clones AND it hard-locks language_code='en'. "
+                 "Note: eleven_v3 and eleven_english_v1 use different voice "
+                 "embeddings, so the same voice_id may sound noticeably different.",
         )
         st.caption(f"Using `{selected_model_id}` for TTS.")
+        if selected_model_id in ("eleven_v3", "eleven_monolingual_v1"):
+            st.warning(
+                "⚠️ Older voices (Barbara / April) were cloned on "
+                "multilingual_v2 — `eleven_v3` and `eleven_english_v1` use "
+                "different latents and may sound noticeably different. "
+                "If the voice doesn't sound right, fall back to "
+                "`eleven_turbo_v2_5` or `eleven_multilingual_v2`."
+            )
 
     # Base video + music: pick from library, or upload a new one.
     _select_or_upload_base_video(voice_option[1], voice_option[0])
