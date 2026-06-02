@@ -148,6 +148,17 @@ def cleanup_old_sessions(max_age_seconds=3600):
                 print(f"Error cleaning up {item_path}: {e}")
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_account_voices(api_key: str):
+    """Return [(name, voice_id, category)] for every voice in an account."""
+    client = ElevenLabs(api_key=api_key)
+    resp = client.voices.get_all()
+    return [
+        (v.name, v.voice_id, getattr(v, "category", None) or "")
+        for v in resp.voices
+    ]
+
+
 # Streamlit UI
 st.set_page_config(page_title="Video Greeting Generator", page_icon="🎬")
 st.title("Video Greeting Generator")
@@ -157,19 +168,6 @@ if "session_id" not in st.session_state:
     st.session_state["session_id"] = uuid.uuid4()
     cleanup_old_sessions()
 
-
-# Add a select box for voice selection
-voice_option = st.selectbox(
-    "Select Voice",
-    options=[
-        ("Barbara Pigg", "Ro4VVDudw85O3XfD3nva", "primary"),
-        ("ZTS07a VO", "LEbsUt7al3JBfWgXlFFc", "primary"),
-        ("April Lowrie Pro", "Ww6IPT0jYNzyTUBnXTDG", "alt"),
-        ("Dale - YourCause", "xUeVfoX4TgqQTP9P2Rns", "alt"),
-        ("Mark Davis", "gVSJ0zoFJ1Wgov5gD1Pi", "alt"),
-    ],
-    format_func=lambda x: x[0],
-)
 
 # Read API keys from environment variables
 primary_api_key = os.environ.get("ELEVENLABS_API_KEY")
@@ -184,16 +182,62 @@ if alt_api_key:
 if "primary" not in client_registry:
     st.error("ELEVENLABS_API_KEY environment variable not set.")
 else:
-    # Determine which client to use for the selected voice
-    selected_label = voice_option[2]
-    if selected_label not in client_registry:
-        st.error(
-            f"Selected voice '{voice_option[0]}' requires an API key that has not been provided."
-        )
+    # Build the voice dropdown from every voice in each connected account.
+    api_keys = {"primary": primary_api_key, "alt": alt_api_key}
+    seen_voice_ids = set()
+    custom_voices = []
+    premade_voices = []
+    with st.spinner("Loading voices..."):
+        for account_key in ("primary", "alt"):
+            api_key = api_keys.get(account_key)
+            if not api_key:
+                continue
+            try:
+                account_voices = fetch_account_voices(api_key)
+            except Exception as e:
+                st.warning(
+                    f"Could not load voices for the '{account_key}' account: {e}"
+                )
+                continue
+            for name, voice_id, category in account_voices:
+                # Premade voices are shared across accounts (same id) — keep one.
+                if voice_id in seen_voice_ids:
+                    continue
+                seen_voice_ids.add(voice_id)
+                entry = (name, voice_id, account_key)
+                if category == "premade":
+                    premade_voices.append(entry)
+                else:
+                    custom_voices.append(entry)
+
+    custom_voices.sort(key=lambda e: e[0].lower())
+    premade_voices.sort(key=lambda e: e[0].lower())
+    voice_entries = custom_voices + premade_voices
+
+    if not voice_entries:
+        st.error("No voices found in the connected ElevenLabs account(s).")
         st.stop()
 
-    # Alias the chosen client so the rest of the code remains unchanged
-    client = client_registry[selected_label]
+    # Disambiguate duplicate names that point to different voices.
+    name_counts = {}
+    for _name, _vid, _acct in voice_entries:
+        name_counts[_name] = name_counts.get(_name, 0) + 1
+    account_display = {"primary": "Account 1", "alt": "Account 2"}
+
+    def _voice_label(entry):
+        label_name, _voice_id, label_account = entry
+        if name_counts.get(label_name, 0) > 1:
+            return f"{label_name} ({account_display.get(label_account, label_account)})"
+        return label_name
+
+    voice_option = st.selectbox(
+        "Select Voice",
+        options=voice_entries,
+        format_func=_voice_label,
+    )
+
+    # The chosen voice dictates which account's client generates it.
+    client = client_registry[voice_option[2]]
 
     # Add pronunciation dictionary file uploader
     pronunciation_file = st.file_uploader(
