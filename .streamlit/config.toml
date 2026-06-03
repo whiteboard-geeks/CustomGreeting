@@ -1,0 +1,3 @@
+[server]
+# Allow base videos up to 1 GB (Streamlit defaults to 200 MB)
+maxUploadSize = 1024
