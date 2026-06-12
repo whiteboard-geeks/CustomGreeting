@@ -15,6 +15,78 @@ from elevenlabs import VoiceSettings, PronunciationDictionaryVersionLocator
 from elevenlabs.client import ElevenLabs
 
 
+# Local library of reusable base videos / music so users don't have to
+# re-upload the same large files every time. Point BASE_MATERIALS_DIR at a
+# folder containing "Base Videos/" and "Base Music/" subfolders.
+BASE_MATERIALS_DIR = os.environ.get(
+    "BASE_MATERIALS_DIR", "/Users/work/Dropbox/AI Customization Base Materials"
+)
+LIBRARY_VIDEO_DIR = os.path.join(BASE_MATERIALS_DIR, "Base Videos")
+LIBRARY_MUSIC_DIR = os.path.join(BASE_MATERIALS_DIR, "Base Music")
+
+
+def list_library(folder, extensions):
+    """Sorted list of files in a library folder matching the given extensions."""
+    if not os.path.isdir(folder):
+        return []
+    return sorted(f for f in os.listdir(folder) if f.lower().endswith(extensions))
+
+
+def media_picker(label, library_dir, extensions, upload_types, key):
+    """Let the user pick from the local library or upload a file.
+
+    Returns ("library", path) | ("upload", uploaded_file) | None.
+    """
+    library_files = list_library(library_dir, extensions)
+    if library_files:
+        source = st.radio(
+            f"{label} source",
+            ["Library", "Upload"],
+            horizontal=True,
+            key=f"{key}_source",
+        )
+        if source == "Library":
+            choice = st.selectbox(
+                f"Select {label} from library", library_files, key=f"{key}_library"
+            )
+            if choice:
+                return ("library", os.path.join(library_dir, choice))
+            return None
+    uploaded = st.file_uploader(
+        f"Upload {label}", type=upload_types, key=f"{key}_upload"
+    )
+    return ("upload", uploaded) if uploaded is not None else None
+
+
+def resolve_media(choice, dest_path):
+    """Materialize a media choice to a usable path on disk.
+
+    Library files are used in place; uploads are written to dest_path.
+    """
+    if choice is None:
+        return None
+    kind, value = choice
+    if kind == "library":
+        return value
+    with open(dest_path, "wb") as f:
+        f.write(value.read())
+    return dest_path
+
+
+def is_temp_path(path, base_folder):
+    """True if path lives inside base_folder (i.e. an uploaded temp file we own)."""
+    if not path:
+        return False
+    return os.path.abspath(path).startswith(os.path.abspath(base_folder) + os.sep)
+
+
+def quality_ffmpeg_params(output_quality):
+    """ffmpeg params for the chosen output quality (None = original)."""
+    if output_quality and output_quality.startswith("720p"):
+        return ["-vf", "scale=-2:720", "-crf", "23", "-preset", "medium"]
+    return None
+
+
 # Password protection
 def check_password():
     """Returns True if the user entered the correct password."""
@@ -257,9 +329,23 @@ else:
                 st.error(f"Error uploading pronunciation dictionary: {str(e)}")
                 pronunciation_dict = None
 
-    # Continue with other file uploaders
-    base_video = st.file_uploader("Upload Base Video", type=["mp4"])
-    music = st.file_uploader("Upload Music", type=["wav"])
+    # Base video and music: pick from the local library or upload.
+    base_video_choice = media_picker(
+        "Base Video", LIBRARY_VIDEO_DIR, (".mp4",), ["mp4"], "base_video"
+    )
+    music_choice = media_picker(
+        "Music", LIBRARY_MUSIC_DIR, (".wav",), ["wav"], "music"
+    )
+
+    # Output video quality
+    output_quality = st.radio(
+        "Output Video Quality",
+        ["720p (smaller files)", "Original resolution"],
+        help=(
+            "720p re-encodes to 1280×720 at a moderate bitrate for much smaller "
+            "files. Original keeps the base video's resolution/bitrate."
+        ),
+    )
 
     # New input fields for text customization
     text_before = st.text_input("Text Before Customization", "Hi")
@@ -302,22 +388,21 @@ else:
 
     # Add a "Generate Test Audio" button
     if st.button("Generate Test Audio"):
-        if not base_video or not variables_input:
-            st.error("Please provide all inputs.")
+        if not base_video_choice or not music_choice or not variables_input:
+            st.error("Please provide a base video, music, and variables.")
         else:
             with st.spinner("Generating test audio..."):
                 input_folder, output_folder = get_session_paths()
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
 
-                # Save uploaded files
-                base_video_path = os.path.join(input_folder, "base_video.mp4")
-                with open(base_video_path, "wb") as f:
-                    f.write(base_video.read())
-
-                music_path = os.path.join(input_folder, "music.wav")
-                with open(music_path, "wb") as f:
-                    f.write(music.read())
+                # Resolve base video and music (library files used in place)
+                base_video_path = resolve_media(
+                    base_video_choice, os.path.join(input_folder, "base_video.mp4")
+                )
+                music_path = resolve_media(
+                    music_choice, os.path.join(input_folder, "music.wav")
+                )
 
                 # Create greetings folder
                 greetings_folder = os.path.join(input_folder, "greetings")
@@ -357,22 +442,21 @@ else:
 
     # Add a "Generate Test Video" button
     if st.button("Generate Test Video"):
-        if not base_video or not variables_input:
-            st.error("Please provide all inputs.")
+        if not base_video_choice or not music_choice or not variables_input:
+            st.error("Please provide a base video, music, and variables.")
         else:
             with st.spinner("Generating test video..."):
                 input_folder, output_folder = get_session_paths()
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
 
-                # Save uploaded files
-                base_video_path = os.path.join(input_folder, "base_video.mp4")
-                with open(base_video_path, "wb") as f:
-                    f.write(base_video.read())
-
-                music_path = os.path.join(input_folder, "music.wav")
-                with open(music_path, "wb") as f:
-                    f.write(music.read())
+                # Resolve base video and music (library files used in place)
+                base_video_path = resolve_media(
+                    base_video_choice, os.path.join(input_folder, "base_video.mp4")
+                )
+                music_path = resolve_media(
+                    music_choice, os.path.join(input_folder, "music.wav")
+                )
 
                 # Create greetings folder
                 greetings_folder = os.path.join(input_folder, "greetings")
@@ -395,7 +479,10 @@ else:
                     test_output_filename = f"test_{variables[0]}.mp4"
                     test_output_path = os.path.join(output_folder, test_output_filename)
                     final_video.write_videofile(
-                        test_output_path, codec="libx264", audio_codec="aac"
+                        test_output_path,
+                        codec="libx264",
+                        audio_codec="aac",
+                        ffmpeg_params=quality_ffmpeg_params(output_quality),
                     )
 
                     st.success("Test video generated successfully!")
@@ -403,22 +490,21 @@ else:
 
     # Move the "Generate Videos" button here
     if st.button("Generate Videos"):
-        if not base_video or not variables_input:
-            st.error("Please provide all inputs.")
+        if not base_video_choice or not music_choice or not variables_input:
+            st.error("Please provide a base video, music, and variables.")
         else:
             with st.spinner("Generating videos..."):
                 input_folder, output_folder = get_session_paths()
                 os.makedirs(input_folder, exist_ok=True)
                 os.makedirs(output_folder, exist_ok=True)
 
-                # Save uploaded files
-                base_video_path = os.path.join(input_folder, "base_video.mp4")
-                with open(base_video_path, "wb") as f:
-                    f.write(base_video.read())
-
-                music_path = os.path.join(input_folder, "music.wav")
-                with open(music_path, "wb") as f:
-                    f.write(music.read())
+                # Resolve base video and music (library files used in place)
+                base_video_path = resolve_media(
+                    base_video_choice, os.path.join(input_folder, "base_video.mp4")
+                )
+                music_path = resolve_media(
+                    music_choice, os.path.join(input_folder, "music.wav")
+                )
 
                 # Generate greetings
                 greetings_folder = os.path.join(input_folder, "greetings")
@@ -464,7 +550,10 @@ else:
                             )
                             output_path = os.path.join(output_folder, output_filename)
                             final_video.write_videofile(
-                                output_path, codec="libx264", audio_codec="aac"
+                                output_path,
+                                codec="libx264",
+                                audio_codec="aac",
+                                ffmpeg_params=quality_ffmpeg_params(output_quality),
                             )
                             progress_counter += 1
                             zipf.write(output_path, arcname=output_filename)
@@ -475,10 +564,14 @@ else:
                     if os.path.isfile(file_path):
                         os.remove(file_path)
 
-                # Remove the base video and music files
-                if os.path.isfile(base_video_path):
+                # Remove uploaded temp files only — never delete library originals
+                if is_temp_path(base_video_path, input_folder) and os.path.isfile(
+                    base_video_path
+                ):
                     os.remove(base_video_path)
-                if os.path.isfile(music_path):
+                if is_temp_path(music_path, input_folder) and os.path.isfile(
+                    music_path
+                ):
                     os.remove(music_path)
 
                 st.success("Processing complete!")
